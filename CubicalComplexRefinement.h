@@ -1,0 +1,836 @@
+﻿// CubicalComplexRefinement.h: 
+// class implementing cubical complex refinement data structure
+
+#pragma once
+
+#include <cstddef>
+#include <cstdint>
+#include <functional>
+#include <limits>
+#include <stdexcept>
+#include <unordered_map>
+#include <unordered_set>
+#include <vector>
+#include <array>
+#include <queue>
+#include <set>
+#include <stack>
+
+#include <Eigen/SparseCore>
+#include "OctreeSF.h"
+
+namespace nsCCR
+{
+
+const int g_maxDim=5;
+const int g_maxDepth=16;
+const int g_secondSubdivNum=8;
+const int g_firstSubdivNum=8;//resolution of initial grid is 2^8
+inline constexpr float g_zero = std::numeric_limits<float>::epsilon();
+inline constexpr float g_infty = std::numeric_limits<float>::max();
+
+typedef uint16_t Coefficient;
+inline bool isPrime(const Coefficient n) {
+	if (!(n & 1) || n < 2) return n == 2;
+	for (Coefficient p = 3; p <= n / p; p += 2)
+		if (!(n % p)) return false;
+	return true;
+}
+
+inline void multInvrVect(const Coefficient m, std::vector<Coefficient>& inverse) {
+	// std::vector<Coefficient> inverse(m);
+    inverse.resize(m);
+	inverse[1] = 1;
+	// m = a * (m / a) + m % a
+	// Multipying with inverse(a) * inverse(m % a):
+	// 0 = inverse(m % a) * (m / a) + inverse(a)  (mod m)
+	for (Coefficient a = 2; a < m; ++a) inverse[a] = m - (inverse[m % a] * (m / a)) % m;
+	return;
+}
+
+
+template<class Entry>
+class sparseColMat
+{
+public:
+    using matColumn = std::vector<Entry>;
+
+    const matColumn& column(size_t i) const
+    {
+        return columns.at(i);
+    }
+
+    matColumn& column(size_t i)
+    {
+        return columns.at(i);
+    }
+
+    void appendColumn(matColumn column)
+    {
+        columns.push_back(std::move(column));
+    }
+
+private:
+    std::vector<matColumn> columns;
+};
+
+    class Coordinate 
+    {
+        // coord: [63:60]=m_dim, [59:56]=gird size, [55:53]=extend direction,
+        //        grid size = # of minimum edge length (length of the finest cube), 
+        //        the edge length is 2^grid size
+        //        [47:32]=x_min coordinates, [31:16]=y_min coordinates, [15:0]=z_min coordinates
+        //        each coordinates can be divided to [15:8]=coordinate corr. to first grid, 
+        //        [7:0]=coordinate corr. to subdivision grid
+        // NOTATION: location is the coordinate of the lower-left corner of the node, it has
+        // dimension same as the input mesh, here always assumes to be 3.
+        uint64_t m_value;
+
+        constexpr static uint64_t DimMask=0xFULL << 60;
+        constexpr static uint64_t GridSizeMask=0xFULL << 56;
+        constexpr static uint64_t ExtendDirMask=0x7ull << 53;
+        constexpr static uint64_t LocationMask=0xFFFFFFFFFFFFULL;
+    public:
+        // constructor
+        Coordinate(uint64_t value) : m_value(value) {};
+        Coordinate(int dim=0,uint16_t gridSize=0, int* extendDir=nullptr, uint16_t *loc=nullptr)
+        : m_value(encode(dim,gridSize,extendDir,loc)) {};
+        ~Coordinate() = default;
+        Coordinate(const Coordinate& other) : m_value(other.m_value) {};
+
+        inline uint64_t data() const
+        {
+            return m_value;
+        };
+
+        inline bool operator==(const Coordinate& other) const
+        {
+            return m_value == other.m_value;
+        }
+
+        inline int dim() const
+        {
+            return static_cast<int>((m_value >> 60) & 0xFu);
+        };
+        inline bool setDim(int dim)
+        {
+            if(dim<0||dim>3)
+            {
+                return false;
+            }
+            m_value &= ~DimMask;
+            m_value |= (static_cast<uint64_t>(dim) & 0xFu) << 60;
+            return true;
+        }
+
+        // calculate grid size
+        inline uint16_t gridSize() const
+        {
+            int num=static_cast<int>((m_value >> 56) & 0xFu);
+            if(num==0)
+            {
+                return static_cast<uint16_t>(0);
+            }
+            return static_cast<uint16_t>(1<<(num-1));
+        };
+        // =-1 if dim()==0, log2(gridSize)-1 otherwise
+        inline int subdivNum() const
+        {
+            return dim()==0?-1:9-static_cast<int>((m_value >> 56) & 0xFu);
+        };
+        inline uint16_t encodeGridSize(uint16_t x) const
+        {
+            if(x==0)
+            {
+                return static_cast<uint16_t>(0);
+            }
+            uint16_t s=1;
+            for(uint16_t g=x; g>1; g>>=1)
+            {
+                ++s;
+            }
+            return s;
+        };
+        inline void setGridSize(uint16_t x)
+        {
+            m_value &= ~GridSizeMask;
+            m_value |= (static_cast<uint64_t>(encodeGridSize(x)) & 0xFu) << 56;
+        }
+        
+        // calculate extend direction
+        inline void getExtendDir(int* extendDir) const
+        {
+            int extendDirBin=(m_value >> 53) & 0x7u;
+            extendDir[0]=(extendDirBin>>2)&0b1u;
+            extendDir[1]=(extendDirBin>>1)&0b1u;
+            extendDir[2]=extendDirBin&0b1u;
+        };
+        inline void setExtendDir(int* extendDir)
+        {
+            if(extendDir==nullptr)// clear extendDir
+            {
+                m_value &= ~ExtendDirMask;
+                return;
+            }
+            uint64_t extendDirBin=static_cast<uint64_t>(extendDir[0]*4+extendDir[1]*2+extendDir[2]);
+            m_value &= ~ExtendDirMask;
+            m_value |= (static_cast<uint64_t>(extendDirBin) & 0x7u) << 53;
+        };
+
+        // location of the lower-left corner of the node
+        inline void location(uint16_t *loc) const
+        {
+            for(int i=0;i<3;i++)
+            {
+                loc[i] = static_cast<uint16_t>((m_value >> (16 * (3-1-i))) & 0xFFFFu);
+            }
+        };
+
+        inline void setLocation(uint16_t *loc)
+        {
+            if(loc==nullptr)// clear location
+            {
+                m_value &= ~LocationMask;
+                return;
+            }
+            m_value &= ~LocationMask;
+            for(int i=0;i<3;i++)
+            {
+                m_value |= (static_cast<uint64_t>(loc[i]) & 0xFFFFu) << (16 * (3-1-i));
+            }
+        };
+        inline void setLocationI(int i, uint16_t loc)
+        {
+            m_value &= ~(0xFFFFULL << (16 * (3-1-i)));
+            m_value |= (static_cast<uint64_t>(loc) & 0xFFFFULL) << (16 * (3-1-i));
+        };
+        inline uint64_t encode(int dim=0,uint16_t gridSize=0, int* extendDir=nullptr, uint16_t *loc=nullptr)
+        {
+            uint64_t value=0;
+            value |= (static_cast<uint64_t>(dim) & 0xFu) << 60;
+            // encode gridSize
+            uint16_t s=encodeGridSize(gridSize);
+            value |= (static_cast<uint64_t>(s) & 0xFu) << 56;
+            if(extendDir!=nullptr)
+            {
+                uint64_t extendDirBin=static_cast<uint64_t>(extendDir[0]*4+extendDir[1]*2+extendDir[2]);
+                value |= (static_cast<uint64_t>(extendDirBin) & 0x7u) << 53;
+            }
+            if(loc!=nullptr)
+            {
+                for(int i=0;i<3;i++)
+                {
+                value |= (static_cast<uint64_t>(loc[i]) & 0xFFFFu) << (16 * (3-1-i));
+                }
+            }
+            return value;
+        };
+
+        // get the coordinate of children
+        // children are sorted by the lexicographic order of the coordinates,
+        // e.g. in dim=3, children[0]={xmin,ymin,zmin}, children[1]={xmin,ymin,zmax}, ...
+        // we should work on geo information rather than code directly
+        bool getChildrenCoord(std::vector<Coordinate>& children) const
+        {
+            const int d = dim();
+            const uint16_t gs = gridSize();
+            if(d == 0 || gs <= 1)
+            {
+                return false;
+            }
+
+            const int numChildren = 1 << d;
+            children.resize(numChildren);
+            int extendDir[3];
+            getExtendDir(extendDir);
+            uint16_t loc[3];
+            location(loc);
+            const uint16_t halfGrid = static_cast<uint16_t>(gs / 2);
+            Coordinate coordHeader = m_value;
+            coordHeader.setGridSize(halfGrid);
+            coordHeader.setLocation(nullptr);
+            // children[4] -- {1,0,0} -- {xmax,ymin,zmin}
+            for(int idx = 0; idx < numChildren; ++idx)
+            {
+                children[idx] = coordHeader;
+                int activeIdx = 0;
+                for(int i = 0; i < 3; ++i)
+                {
+                    uint16_t childLoc = loc[i];
+                    if(extendDir[i] == 1)
+                    {
+                        if((idx >> (d - 1 - activeIdx)) & 1)
+                        {
+                            childLoc += halfGrid;
+                        }
+                        ++activeIdx;
+                    }
+                    children[idx].setLocationI(i, childLoc);
+                }
+            }
+            return true;
+        };
+
+        Coordinate getParentCoord() const
+        {
+            Coordinate coordParent = m_value;
+            uint16_t gs = gridSize();
+            uint16_t gridSizeBin = encodeGridSize(gs);
+            coordParent.setGridSize(static_cast<uint16_t>(gs * 2));
+            uint16_t loc[3];
+            location(loc);
+            int extendDir[3];
+            getExtendDir(extendDir);
+            for(int i = 0; i < 3; ++i)
+            {
+                // Preserve the fixed coordinates of edges and faces.
+                if(extendDir[i] == 0) continue;
+                uint16_t parentLoc =
+                    static_cast<uint16_t>((static_cast<uint32_t>(loc[i]) >> gridSizeBin) << gridSizeBin);
+                coordParent.setLocationI(i, parentLoc);
+            }
+            return coordParent;
+        }
+
+        // get idx-th facet coordinate of a simplex. 
+        // A simplex with given dim have 2*dim facets, each eliminating a extendDir,
+        // and set the corr. coordinate to min/max
+        // idx is set as follows: idx set idx/2-th extendDir to 0,
+        // and if idx is even, set the corr. coordinate to min; odd to max.
+        bool getFacetICoord(int idx, Coordinate& coord)
+        {
+            // check if idx is valid
+            if(idx<0||idx>=2*dim()||dim()==0)
+            {
+                return false;
+            }
+
+            // set the corr. extendDir to 0
+            int extendDir[3];
+            getExtendDir(extendDir);
+            uint16_t loc[3];
+            location(loc);
+            uint16_t gs=gridSize();
+
+            int count=0;
+            for(int i=0;i<3;i++)
+            {
+                if(extendDir[i]==1)
+                {
+                    if(count==idx/2)
+                    {
+                        extendDir[i]=0;
+                        if(idx%2==1)
+                        {
+                            loc[i]+=gs;
+                        }
+                        break;
+                    }
+                    else
+                    {
+                        count++;
+                    }
+                }    
+            }
+
+            // encode the new coordinate
+            uint16_t newGridSize=dim()==1?0:gs;
+            coord = Coordinate(dim()-1,newGridSize,extendDir,loc);
+            return true;
+        };
+
+        int getAllFacetsCoord(std::vector<Coordinate>& coords) const
+        {
+            const int currentDim = dim();
+            if(currentDim == 0)
+            {
+                coords.clear();
+                return 0;
+            }
+
+            int extendDir[3];
+            getExtendDir(extendDir);
+            uint16_t loc[3];
+            location(loc);
+            const uint16_t gs = gridSize();
+            const uint16_t facetGridSize = currentDim == 1 ? 0 : gs;
+
+            coords.resize(static_cast<size_t>(2 * currentDim));
+            int facetIdx = 0;
+            for(int axis = 0; axis < 3; ++axis)
+            {
+                if(extendDir[axis] == 0)
+                {
+                    continue;
+                }
+
+                extendDir[axis] = 0;
+                coords[facetIdx++] = Coordinate(currentDim - 1, facetGridSize, extendDir, loc);
+
+                loc[axis] = static_cast<uint16_t>(loc[axis] + gs);
+                coords[facetIdx++] = Coordinate(currentDim - 1, facetGridSize, extendDir, loc);
+
+                loc[axis] = static_cast<uint16_t>(loc[axis] - gs);
+                extendDir[axis] = 1;
+            }
+
+            return facetIdx;
+        };
+        // get i-th cofacet coordinate of a simplex.
+        // A simplex of dimension dim has 2*(3-dim) cofacets, each adding an active axis,
+        // and set the corr. coordinate to loc-gridSize or loc.
+        // Return the incidence coefficient (+/-1), or 0 if no valid cofacet exists.
+        int getCofacetICoord(int idx, Coordinate& coord)
+        {
+            const int currentDim = dim();
+            if(idx < 0 || currentDim >= 3 || idx >= 2 * (3 - currentDim))
+            {
+                return 0;
+            }
+
+            int extendDir[3];
+            getExtendDir(extendDir);
+            uint16_t loc[3];
+            location(loc);
+            const uint16_t gs = currentDim == 0 ? 1 : gridSize();
+            constexpr uint32_t maxResolution = 1u << 16;
+
+            int missingAxisRank = 0;
+            for(int axis = 0; axis < 3; ++axis)
+            {
+                if(extendDir[axis] != 0)
+                {
+                    continue;
+                }
+
+                if(missingAxisRank == idx / 2)
+                {
+                    const int k = axis - missingAxisRank;
+                    const int coefficient = ((k + idx) % 2 == 0) ? 1 : -1;
+                    extendDir[axis] = 1;
+                    if(idx % 2 == 0)
+                    {
+                        if(loc[axis] < gs)
+                        {
+                            return 0;
+                        }
+                        loc[axis] = static_cast<uint16_t>(loc[axis] - gs);
+                        coord = Coordinate(currentDim + 1, gs, extendDir, loc);
+                        return coefficient;
+                    }
+
+                    if(static_cast<uint32_t>(loc[axis]) + gs > maxResolution)
+                    {
+                        return 0;
+                    }
+
+                    coord = Coordinate(currentDim + 1, gs, extendDir, loc);
+                    return coefficient;
+                }
+
+                ++missingAxisRank;
+            }
+
+            return 0;
+        };
+        int getAllCofacetCoord(std::vector<Coordinate>& coords)
+        {
+            const int currentDim = dim();
+            if(currentDim >= 3)
+            {
+                coords.clear();
+                return 0;
+            }
+
+            int extendDir[3];
+            getExtendDir(extendDir);
+            uint16_t loc[3];
+            location(loc);
+            const uint16_t gs = currentDim == 0 ? 1 : gridSize();
+            constexpr uint32_t maxResolution = 1u << 16;
+
+            coords.clear();
+            coords.reserve(static_cast<size_t>(2 * (3 - currentDim)));
+            for(int axis = 0; axis < 3; ++axis)
+            {
+                if(extendDir[axis] != 0)
+                {
+                    continue;
+                }
+
+                extendDir[axis] = 1;
+
+                // Negative-side cofacet: its lower corner is one grid size below this simplex.
+                if(loc[axis] >= gs)
+                {
+                    loc[axis] = static_cast<uint16_t>(loc[axis] - gs);
+                    coords.emplace_back(currentDim + 1, gs, extendDir, loc);
+                    loc[axis] = static_cast<uint16_t>(loc[axis] + gs);
+                }
+
+                // Positive-side cofacet has the same lower corner as this simplex.
+                if(static_cast<uint32_t>(loc[axis]) + gs <= maxResolution)
+                {
+                    coords.emplace_back(currentDim + 1, gs, extendDir, loc);
+                }
+                extendDir[axis] = 0;
+            }
+
+            return static_cast<int>(coords.size());
+        };
+    };
+
+    class CoordinateHash
+    {
+    public:
+        size_t operator()(const Coordinate& coord) const
+        {
+            return std::hash<uint64_t>{}(coord.data());
+        }
+    };
+
+
+
+class CubicalComplexRefinement
+{
+public:
+    using real=float;
+
+    struct CellData
+    {
+        Coordinate domiVert;
+        const Coordinate* gradPair = nullptr;
+    };
+    struct VertData
+    {
+        real filtration;
+        const Coordinate* gradPair = nullptr;
+    };
+    
+    struct CellOrder
+    {
+        CellOrder()=default;
+        CellOrder(real filt,Coordinate vert, Coordinate coor, Coefficient c=0)
+        : filtration(filt), domiVert(vert), coord(coor), coef(c){};
+        real filtration;
+        Coordinate domiVert;
+        Coordinate coord;
+        Coefficient coef;
+        inline bool operator==(const CellOrder& other) const
+        {
+            return coord == other.coord;// if coordinate are equal, all are equal
+        };
+        inline bool operator > (const CellOrder b) const
+        {
+            return filtration>b.filtration||
+            (filtration==b.filtration&& domiVert.data()>b.domiVert.data())||
+            (filtration==b.filtration && domiVert.data()==b.domiVert.data()&& coord.data()>b.coord.data());
+
+        };
+        inline bool operator < (const CellOrder b) const
+        {
+            return filtration<b.filtration||
+            (filtration==b.filtration&& domiVert.data()<b.domiVert.data())||
+            (filtration==b.filtration && domiVert.data()==b.domiVert.data()&& coord.data()<b.coord.data());
+        };
+    };
+    class CellOrderHash
+    {
+    public:
+        size_t operator()(const CellOrder& cell) const
+        {
+            return std::hash<uint64_t>{}(cell.coord.data());
+        }
+
+    };
+    class LowerStar
+    {
+    public:
+        using CellQueue = std::priority_queue<CellOrder, std::vector<CellOrder>, std::greater<CellOrder>>;
+        using CellSet = std::set<CellOrder, std::greater<CellOrder>>;
+        LowerStar() = default;
+        real filtration = 0;
+        Coordinate domiVert;
+        CellOrder cellOrder(const Coordinate& cell) const
+        {
+            return CellOrder(filtration, domiVert, cell);
+        }
+        CellQueue pqOne;
+        CellSet pqZero;
+
+        std::vector<Coordinate> cells;
+        std::unordered_map<Coordinate, std::vector<Coordinate>, CoordinateHash> facets;
+        std::unordered_map<Coordinate, std::vector<Coordinate>, CoordinateHash> cofacets;
+
+        // Cells no longer available for a gradient pairing, including
+        // gradient-paired cells and cells recorded as critical.
+        std::unordered_set<Coordinate, CoordinateHash> pairedCells;
+
+        void clear();
+        
+        inline bool isUnpaired(const Coordinate& cell) const;
+
+        // Description:
+        // Count facets of alpha that remain available for pairing.
+        // Parameters:
+        // alpha: I, cell whose unpaired facets are counted
+        // Return:
+        // int: number of unpaired facets of alpha
+        int numUnpairedFaces(const Coordinate& alpha) const;
+
+        // Description:
+        // Return the sole available facet of alpha.
+        // Parameters:
+        // alpha: I, cell with exactly one unpaired facet
+        // Return:
+        // Coordinate: the unique unpaired facet of alpha
+        Coordinate getUniqueUnpairedFace(const Coordinate& alpha) const;
+        void enqueueOneUnpairedCofacets(const Coordinate& cell);
+    };
+public:
+    CubicalComplexRefinement() = default;
+
+    CubicalComplexRefinement(const nsSF::OctreeSF<real>* scalarField, uint16_t prime=2)
+    {
+        if(!isPrime(prime))
+        {
+            throw "input coefficient field is not a prime";
+        }
+        m_modulus=prime;
+        multInvrVect(prime, m_multInvr);
+        buildVFilt(scalarField);
+    }
+
+    // Description:
+    // Build simplex filtration from octree leaves:
+    // filt(splx)=max{filt(facet)|facet<splx, dim(facet)=sim(splx)-1}
+    // Parameters:
+    // scalarField: I, supplies a leaf iterator and point-value queries
+    void buildVFilt(const nsSF::OctreeSF<real>* scalarField);
+
+    using ExistFacets = std::array<std::unordered_set<Coordinate, CoordinateHash>, 3>;
+
+    bool insertVertex(const Coordinate& coord, real filtration, ExistFacets& existFacets);
+    bool checkAndInst(int dim, const Coordinate& coord, const Coordinate& dominatingVertex, ExistFacets& existFacets);
+    Coordinate facetDomiVert(const Coordinate& cell);
+    void addNode(const nsSF::NodeInfo<real>& node, const nsSF::OctreeSF<real>* scalarField, ExistFacets& existFacets);
+
+    // Description:
+    // just subdivide a given node, do not update its gradient pair and persistent homology
+    // we suggest to use it only before ph calculation.  
+    // Parameters:
+    // coord: I, node to be subdivided, only top-dimension nodes allowed
+    bool combSubdiv(Coordinate coord);
+
+//private:
+public:
+    // part 1: combinatorics
+
+    // Description:
+    inline bool contain(Coordinate coord) const
+    {
+        if(coord.dim()==0)
+        {
+            return(m_vertFilt.find(coord)!=m_vertFilt.end());
+        }
+        return(m_splxFilt.find(coord)!=m_splxFilt.end());
+    };
+
+    // Description:
+    // calculate the i-th facets of simplex. a facet might be the sum of several simplices
+    // Parameters: 
+    // idx: I, 
+    // simplex: I,
+    // facet: O,
+    // Return:
+    // int: number of facets found
+    int getFacetI(int idx, Coordinate simplex, std::vector<Coordinate>& facet)
+    {
+        facet.clear();
+        Coordinate directFacet;
+        if(!simplex.getFacetICoord(idx, directFacet))
+        {
+            return -1;
+        }
+
+        if(contain(directFacet))
+        {
+            facet.push_back(directFacet);
+            return 1;
+        }
+        std::stack<Coordinate> facetCand;
+        int count=0;
+        std::vector<Coordinate> children;
+        if(!directFacet.getChildrenCoord(children))
+        {
+            return -1;
+        }
+        for(auto child : children)
+        {
+            facetCand.push(child);
+        }
+        while (!facetCand.empty())
+        {
+            Coordinate currentFacet=facetCand.top();
+            facetCand.pop();
+            if(contain(currentFacet))
+            {
+                facet.push_back(currentFacet);
+                count++;
+            }
+            else
+            {
+                if(!currentFacet.getChildrenCoord(children))
+                {
+                    facet.clear();
+                    return -1;
+                }
+                for(auto child : children)
+                {
+                    facetCand.push(child);
+                }
+            }
+
+        }
+        return count;
+    };
+    // Description:
+    // calculate the i-th cofacet of simplex. There is only 1 possible cofacet
+    // Parameters: 
+    // idx: I, 
+    // simplex: I,
+    // cofacet: O,
+    // Return:
+    // int: incidence coefficient (+/-1), or 0 for invalid input or no stored cofacet
+    int getCofacetI(int idx, Coordinate simplex, Coordinate& cofacet)
+    {
+        Coordinate cofacetCand;
+        const int coefficient = simplex.getCofacetICoord(idx,cofacetCand);
+        if(coefficient == 0)
+        {
+            return 0;
+        }
+        while(m_splxFilt.find(cofacetCand)==m_splxFilt.end())
+        {
+            Coordinate parentCofacet = cofacetCand.getParentCoord();
+            if(parentCofacet.gridSize() >( 1<< g_secondSubdivNum))
+            {
+                return 0;
+            }
+            cofacetCand = parentCofacet;
+        }
+        cofacet = cofacetCand;
+        return coefficient;
+    };
+
+    inline void getTotalFilt(const Coordinate coord, real& filtration, Coordinate& domiVert)
+    {
+        if(coord.dim()==0)
+        {
+            filtration=m_vertFilt[coord].filtration;
+            domiVert=coord;
+        }
+        else
+        {
+            domiVert=m_splxFilt[coord].domiVert;
+            filtration=m_vertFilt[domiVert].filtration;
+        }
+        return;
+    }
+
+    inline real getFiltration(const Coordinate& coord) const
+    {
+        if(coord.dim()==0)
+        {
+            return m_vertFilt.at(coord).filtration;
+        }
+        const Coordinate& dominatingVertex = m_splxFilt.at(coord).domiVert;
+        return m_vertFilt.at(dominatingVertex).filtration;
+    }
+
+    // part 2: persistent homology calculation
+
+    // Description:
+    // The lower star of a stored vertex x contains x and every positive-dimensional
+    // cell whose dominating vertex is x.
+    // Parameters:
+    // x: I,
+    // lowerStar: O,
+    // Return:
+    // bool: is the input Coordinate valid, i.e. x is in m_vertFilt and dim==0
+    bool computeLowerStar(const Coordinate& x, LowerStar& lowerStar);
+
+    // Description:
+    // Mark cell critical and add newly eligible cofacets to pqOne.
+    // Parameters:
+    // lowerStar: I/O, lower-star pairing state
+    // cell: I, cell to mark critical
+    void markCritical(LowerStar& lowerStar, const Coordinate& cell);
+
+    // Description:
+    // Store the gradient pair (beta, alpha) and update affected cofacets.
+    // Parameters:
+    // lowerStar: I/O, lower-star pairing state
+    // beta: I, lower-dimensional cell
+    // alpha: I, higher-dimensional cell
+    void makePair(LowerStar& lowerStar, const Coordinate& beta, const Coordinate& alpha);
+
+    void processLowerStar(const Coordinate& x);
+
+    void computeGradPair();
+
+    /*
+    using ReduceCol=std::priority_queue<CellOrder, std::vector<CellOrder>,std::greater<CellOrder>>;
+    // Description:
+    // initialize a column Rk=D Vk, similar to init_coboundary_and_get_pivot in Ripser
+    CellOrder initCol(Coordinate splx, ReduceCol& Rk);
+    
+    // Combine duplicate entries and discard zeros; an empty result has coefficient 0.
+    inline CellOrder popPivot(ReduceCol& column);
+    // Return the combined pivot while retaining it in the column.
+    inline CellOrder getPivot(ReduceCol& Rk);
+
+    // Coefficient of alpha in beta's coboundary, modulo m_modulus.
+    // Assumes beta is a valid facet (or refined facet piece) of alpha.
+    inline Coefficient getCobdCoef(Coordinate beta, Coordinate alpha);
+    // Description:
+    // Add factor times the original cell and its stored corrections to Vk,
+    // and their coboundaries to Rk.
+    void addCobd(int index, Coefficient factor, int dim, ReduceCol& Vk, ReduceCol& Rk);
+
+    // Add splx with weight factor to Vk and its weighted coboundary to Rk.
+    void addSplxCobd(Coordinate splx, Coefficient factor, int dim, ReduceCol& Vk, ReduceCol& Rk);
+    // Description:
+    // compute persistent homology of cubical complex refinement
+    // we compute the matrix decomposition R=DV, where D is the filtration coboundary matrix of 
+    // relative cohomology C^d(K,K.)->C^{d+1}(K,K.)
+    // This matrix is given as transpose of the filtration boundary matrix with columns and rows
+    // in reverse filtration order. 
+    // Parameters: 
+    // dim: I, 
+    // persPair: O,
+    void computePersPair(int dim, std::vector<std::pair<CellOrder,CellOrder>>& persPair);
+
+    void computePH();
+    */
+   
+    // part 3: persistent homology update
+
+
+
+//private:
+public:
+    std::unordered_map<Coordinate, CellData, CoordinateHash> m_splxFilt;
+    std::unordered_map<Coordinate, VertData, CoordinateHash> m_vertFilt;
+    int m_size[3]={0,0,0};
+
+    Coefficient m_modulus = 2;
+    std::vector<Coefficient> m_multInvr;
+
+    bool phFlag=false;
+    std::array<std::vector<CellOrder>,4> m_columnToReduce;
+    std::unordered_map<CellOrder,uint64_t,CellOrderHash> m_pivotCol;
+
+    std::array<sparseColMat<CellOrder>,4> m_Vk;
+};
+}
