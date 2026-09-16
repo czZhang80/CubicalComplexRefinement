@@ -16,7 +16,6 @@
 #include <set>
 #include <stack>
 
-#include <Eigen/SparseCore>
 #include "OctreeSF.h"
 
 namespace nsCCR
@@ -90,13 +89,19 @@ private:
         constexpr static uint64_t GridSizeMask=0xFULL << 56;
         constexpr static uint64_t ExtendDirMask=0x7ull << 53;
         constexpr static uint64_t LocationMask=0xFFFFFFFFFFFFULL;
+        constexpr static uint64_t NullValue=0xF000000000000000ULL;
     public:
         // constructor
         Coordinate(uint64_t value) : m_value(value) {};
-        Coordinate(int dim=0,uint16_t gridSize=0, int* extendDir=nullptr, uint16_t *loc=nullptr)
+        Coordinate(int dim=-1,uint16_t gridSize=0, int* extendDir=nullptr, uint16_t *loc=nullptr)
         : m_value(encode(dim,gridSize,extendDir,loc)) {};
         ~Coordinate() = default;
         Coordinate(const Coordinate& other) : m_value(other.m_value) {};
+
+        inline bool isNull() const
+        {
+            return m_value==NullValue;
+        };
 
         inline uint64_t data() const
         {
@@ -204,10 +209,11 @@ private:
             m_value &= ~(0xFFFFULL << (16 * (3-1-i)));
             m_value |= (static_cast<uint64_t>(loc) & 0xFFFFULL) << (16 * (3-1-i));
         };
-        inline uint64_t encode(int dim=0,uint16_t gridSize=0, int* extendDir=nullptr, uint16_t *loc=nullptr)
+        inline uint64_t encode(int dim=-1,uint16_t gridSize=0, int* extendDir=nullptr, uint16_t *loc=nullptr)
         {
             uint64_t value=0;
-            value |= (static_cast<uint64_t>(dim) & 0xFu) << 60;
+            const uint64_t encodedDim = dim == -1 ? 15ULL : static_cast<uint64_t>(dim);
+            value |= (encodedDim & 0xFULL) << 60;
             // encode gridSize
             uint16_t s=encodeGridSize(gridSize);
             value |= (static_cast<uint64_t>(s) & 0xFu) << 56;
@@ -499,12 +505,12 @@ public:
     struct CellData
     {
         Coordinate domiVert;
-        const Coordinate* gradPair = nullptr;
+        Coordinate gradPair;
     };
     struct VertData
     {
         real filtration;
-        const Coordinate* gradPair = nullptr;
+        Coordinate gradPair;
     };
     
     struct CellOrder
@@ -542,50 +548,6 @@ public:
             return std::hash<uint64_t>{}(cell.coord.data());
         }
 
-    };
-    class LowerStar
-    {
-    public:
-        using CellQueue = std::priority_queue<CellOrder, std::vector<CellOrder>, std::greater<CellOrder>>;
-        using CellSet = std::set<CellOrder, std::greater<CellOrder>>;
-        LowerStar() = default;
-        real filtration = 0;
-        Coordinate domiVert;
-        CellOrder cellOrder(const Coordinate& cell) const
-        {
-            return CellOrder(filtration, domiVert, cell);
-        }
-        CellQueue pqOne;
-        CellSet pqZero;
-
-        std::vector<Coordinate> cells;
-        std::unordered_map<Coordinate, std::vector<Coordinate>, CoordinateHash> facets;
-        std::unordered_map<Coordinate, std::vector<Coordinate>, CoordinateHash> cofacets;
-
-        // Cells no longer available for a gradient pairing, including
-        // gradient-paired cells and cells recorded as critical.
-        std::unordered_set<Coordinate, CoordinateHash> pairedCells;
-
-        void clear();
-        
-        inline bool isUnpaired(const Coordinate& cell) const;
-
-        // Description:
-        // Count facets of alpha that remain available for pairing.
-        // Parameters:
-        // alpha: I, cell whose unpaired facets are counted
-        // Return:
-        // int: number of unpaired facets of alpha
-        int numUnpairedFaces(const Coordinate& alpha) const;
-
-        // Description:
-        // Return the sole available facet of alpha.
-        // Parameters:
-        // alpha: I, cell with exactly one unpaired facet
-        // Return:
-        // Coordinate: the unique unpaired facet of alpha
-        Coordinate getUniqueUnpairedFace(const Coordinate& alpha) const;
-        void enqueueOneUnpairedCofacets(const Coordinate& cell);
     };
 public:
     CubicalComplexRefinement() = default;
@@ -748,36 +710,34 @@ public:
         return m_vertFilt.at(dominatingVertex).filtration;
     }
 
+    inline CellOrder getCellOrder(const Coordinate& coord) const
+    {
+        const Coordinate owner = coord.dim() == 0 ? coord : m_splxFilt.at(coord).domiVert;
+        return CellOrder(m_vertFilt.at(owner).filtration, owner, coord);
+    }
     // part 2: persistent homology calculation
 
-    // Description:
-    // The lower star of a stored vertex x contains x and every positive-dimensional
-    // cell whose dominating vertex is x.
-    // Parameters:
-    // x: I,
-    // lowerStar: O,
-    // Return:
-    // bool: is the input Coordinate valid, i.e. x is in m_vertFilt and dim==0
-    bool computeLowerStar(const Coordinate& x, LowerStar& lowerStar);
-
-    // Description:
-    // Mark cell critical and add newly eligible cofacets to pqOne.
-    // Parameters:
-    // lowerStar: I/O, lower-star pairing state
-    // cell: I, cell to mark critical
-    void markCritical(LowerStar& lowerStar, const Coordinate& cell);
-
-    // Description:
-    // Store the gradient pair (beta, alpha) and update affected cofacets.
-    // Parameters:
-    // lowerStar: I/O, lower-star pairing state
-    // beta: I, lower-dimensional cell
-    // alpha: I, higher-dimensional cell
-    void makePair(LowerStar& lowerStar, const Coordinate& beta, const Coordinate& alpha);
-
-    void processLowerStar(const Coordinate& x);
-
     void computeGradPair();
+
+    bool oldestCofacet(Coordinate sigma, Coordinate& tao);
+
+    bool youngestFacet(Coordinate tao, Coordinate& sigma);
+
+    // Description:
+    // find and set the apparent pair of a given vertex or simplex
+    // an apparent pair is (sigma,tao), such that sigma is a facet with dim -1 of tao, and 
+    // sigma is the youngest facet of tao; tao is the oldest cofacet of sigma.
+    // Parameters:
+    // sigma: I, lower dimensional cell in an apparent pair
+    // Return:
+    // bool: true if an apparent pair is found, false otherwise
+    bool findApntPair(Coordinate sigma);
+
+    void setApntPair(Coordinate sigma, Coordinate tao);
+
+    void markCrit(Coordinate coord);
+
+    void computeApntPair();
 
     /*
     using ReduceCol=std::priority_queue<CellOrder, std::vector<CellOrder>,std::greater<CellOrder>>;

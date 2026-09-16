@@ -2,6 +2,6 @@
 
 int main(void)
 {
-    testcomputePersPair();
+    testcomputeApntPair();
     return 0;
 }

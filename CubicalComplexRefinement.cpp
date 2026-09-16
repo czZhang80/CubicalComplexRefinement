@@ -150,7 +150,6 @@ void nsCCR::CubicalComplexRefinement::addNode(
     checkAndInst(3, cube, facetDomiVert(cube), existFacets);
 }
 
-
 void nsCCR::CubicalComplexRefinement::buildVFilt(const nsSF::OctreeSF<real>* scalarField)
 {
     if(scalarField == nullptr)
@@ -209,240 +208,125 @@ void nsCCR::CubicalComplexRefinement::buildVFilt(const nsSF::OctreeSF<real>* sca
     }
 }
 
-void nsCCR::CubicalComplexRefinement::LowerStar::clear()
+bool nsCCR::CubicalComplexRefinement::oldestCofacet(Coordinate sigma, Coordinate &tao)
 {
-    filtration = 0;
-    domiVert = Coordinate();
-    cells.clear();
-    facets.clear();
-    cofacets.clear();
-    pairedCells.clear();
-    while(!pqOne.empty())
+    bool found = false;
+    CellOrder oldest;
+    for(int i = 0; i < 2 * (3 - sigma.dim()); ++i)
     {
-        pqOne.pop();
-    }
-    pqZero.clear();
-}
+        Coordinate cofacet;
+        if(getCofacetI(i, sigma, cofacet) == 0) continue;
 
-inline bool nsCCR::CubicalComplexRefinement::LowerStar::isUnpaired(const Coordinate& cell) const
-{
-    return !pairedCells.contains(cell);
-}
-
-int nsCCR::CubicalComplexRefinement::LowerStar::numUnpairedFaces(const Coordinate& alpha) const
-{
-    int count = 0;
-    for(const Coordinate& beta : facets.at(alpha))
-    {
-        if(isUnpaired(beta))
+        const CellOrder candidate = getCellOrder(cofacet);
+        if(!found || candidate < oldest)
         {
-            ++count;
+            oldest = candidate;
+            found = true;
         }
     }
-    return count;
+    if(found) tao = oldest.coord;
+    return found;
 }
 
-nsCCR::Coordinate nsCCR::CubicalComplexRefinement::LowerStar::getUniqueUnpairedFace(const Coordinate& alpha) const
+bool nsCCR::CubicalComplexRefinement::youngestFacet(Coordinate tao, Coordinate &sigma)
 {
-    for(const Coordinate& beta : facets.at(alpha))
+    bool found = false;
+    CellOrder youngest;
+    std::vector<Coordinate> facets;
+    for(int i = 0; i < 2 * tao.dim(); ++i)
     {
-        if(isUnpaired(beta))
+        if(getFacetI(i, tao, facets) <= 0) return false;
+        for(const Coordinate& facet : facets)
         {
-            return beta;
+            const CellOrder candidate = getCellOrder(facet);
+            if(!found || youngest < candidate)
+            {
+                youngest = candidate;
+                found = true;
+            }
         }
     }
-    throw std::logic_error("A unique unpaired facet was requested when none exists.");
+    if(found) sigma = youngest.coord;
+    return found;
 }
 
-void nsCCR::CubicalComplexRefinement::LowerStar::enqueueOneUnpairedCofacets(const Coordinate& cell)
+bool nsCCR::CubicalComplexRefinement::findApntPair(Coordinate sigma)
 {
-    for(const Coordinate& alpha : cofacets[cell])
+    if(sigma.dim()==0)
     {
-        if(!pairedCells.contains(alpha) &&
-           numUnpairedFaces(alpha) == 1)
+        if(!m_vertFilt[sigma].gradPair.isNull())
         {
-            pqOne.push(cellOrder(alpha));
+            return true;
         }
-    }
-}
-
-void nsCCR::CubicalComplexRefinement::markCritical(LowerStar& lowerStar, const Coordinate& cell)
-{
-    lowerStar.pairedCells.insert(cell);
-    m_columnToReduce[cell.dim()].push_back(
-        lowerStar.cellOrder(cell));
-    lowerStar.enqueueOneUnpairedCofacets(cell);
-}
-
-void nsCCR::CubicalComplexRefinement::makePair(
-    LowerStar& lowerStar,
-    const Coordinate& beta,
-    const Coordinate& alpha)
-{
-    lowerStar.pairedCells.insert(beta);
-    lowerStar.pairedCells.insert(alpha);
-    const auto alphaIt = m_splxFilt.find(alpha);
-    if(beta.dim()==0)
-    {
-        const auto betaIt = m_vertFilt.find(beta);
-        betaIt->second.gradPair = &alphaIt->first;
-        alphaIt->second.gradPair = &betaIt->first;
     }
     else
     {
-        const auto betaIt = m_splxFilt.find(beta);
-        betaIt->second.gradPair = &alphaIt->first;
-        alphaIt->second.gradPair = &betaIt->first;
+        if(!m_splxFilt[sigma].gradPair.isNull())
+        {
+            return true;
+        }
     }
-    lowerStar.enqueueOneUnpairedCofacets(beta);
-    lowerStar.enqueueOneUnpairedCofacets(alpha);
+    Coordinate tao, youngest;
+    if(oldestCofacet(sigma, tao) && youngestFacet(tao, youngest) && youngest == sigma)
+    {
+        setApntPair(sigma, tao);
+        return true;
+    }
+    return false;
 }
 
-bool nsCCR::CubicalComplexRefinement::computeLowerStar(const Coordinate& x, LowerStar& lowerStar)
+void nsCCR::CubicalComplexRefinement::setApntPair(Coordinate sigma, Coordinate tao)
 {
-    lowerStar.clear();
-
-    if(x.dim() != 0)
+    const auto taoIt = m_splxFilt.find(tao);
+    if(sigma.dim() == 0)
     {
-        return false;
+        const auto sigmaIt = m_vertFilt.find(sigma);
+        sigmaIt->second.gradPair = taoIt->first;
+        taoIt->second.gradPair = sigmaIt->first;
     }
-    const auto vertexIt = m_vertFilt.find(x);
-    if(vertexIt == m_vertFilt.end())
+    else
     {
-        return false;
-    }
-
-    lowerStar.filtration = vertexIt->second.filtration;
-    lowerStar.domiVert = vertexIt->first;
-
-    std::stack<Coordinate> pending;
-    std::unordered_set<Coordinate, CoordinateHash> visited;
-
-    // The root vertex belongs to its lower star before any filtration tests.
-    lowerStar.cells.push_back(x);
-    pending.push(x);
-    visited.insert(x);
-
-    while(!pending.empty())
-    {
-        const Coordinate cell = pending.top();
-        pending.pop();
-
-        const int cofacetCount = 2 * (3 - cell.dim());
-        for(int idx = 0; idx < cofacetCount; ++idx)
-        {
-            Coordinate cofacet;
-            if(getCofacetI(idx, cell, cofacet)==0)
-            {
-                continue;
-            }
-
-            const auto cofacetIt = m_splxFilt.find(cofacet);
-            if(cofacetIt == m_splxFilt.end() ||
-               cofacetIt->second.domiVert != vertexIt->first)
-            {
-                continue;
-            }
-
-            // The current cell is a facet of every eligible cofacet.
-            const Coordinate cofacetCoordinate = cofacetIt->first;
-            lowerStar.facets[cofacetCoordinate].push_back(cell);
-            lowerStar.cofacets[cell].push_back(cofacetCoordinate);
-
-            // Add and schedule every lower-star cofacet exactly once.
-            if(visited.insert(cofacetCoordinate).second)
-            {
-                lowerStar.cells.push_back(cofacetCoordinate);
-                pending.push(cofacetCoordinate);
-            }
-        }
-    }
-
-    return true;
-}
-
-void nsCCR::CubicalComplexRefinement::processLowerStar(const Coordinate& x)
-{
-    LowerStar lowerStar;
-    if(!computeLowerStar(x, lowerStar))
-    {
-        throw std::invalid_argument("A lower star must be rooted at a stored vertex.");
-    }
-
-
-    // add all 1-cells to PQZero
-    for(auto line : lowerStar.cofacets[x])
-    {
-        lowerStar.pqZero.insert(lowerStar.cellOrder(line));
-    }
-    if(lowerStar.pqZero.empty())
-    {
-        markCritical(lowerStar, x);
-        return;
-    }
-    auto sigmaIt = std::prev(lowerStar.pqZero.end());
-    Coordinate sigma = sigmaIt->coord;
-    lowerStar.pqZero.erase(sigmaIt);
-    makePair(lowerStar, x, sigma);
-
-    // for(const Coordinate& cell : lowerStar.cells)
-    // {
-    //     if(cell.dim() > 1  && lowerStar.numUnpairedFaces(cell) == 1)
-    //     {
-    //         lowerStar.pqOne.push(lowerStar.cellOrder(cell));
-    //     }
-    // }
-
-    while(!lowerStar.pqOne.empty() || !lowerStar.pqZero.empty())
-    {
-        while(!lowerStar.pqOne.empty())
-        {
-            const CellOrder alphaOrder = lowerStar.pqOne.top();
-            const Coordinate alpha = alphaOrder.coord;
-            lowerStar.pqOne.pop();
-            // if(!lowerStar.isUnpaired(alpha))
-            // {
-            //     continue;
-            // }
-
-            const int unpairedFaceCount = lowerStar.numUnpairedFaces(alpha);
-            if(unpairedFaceCount == 0)
-            {
-                lowerStar.pqZero.insert(alphaOrder);
-                continue;
-            }
-            else
-            {
-                const Coordinate beta = lowerStar.getUniqueUnpairedFace(alpha);
-                lowerStar.pqZero.erase(lowerStar.cellOrder(beta));
-                makePair(lowerStar, beta, alpha);
-            }
-        }
-
-        // while(!lowerStar.pqZero.empty() &&
-        //       !lowerStar.isUnpaired(lowerStar.pqZero.rbegin()->coord))
-        // {
-        //     lowerStar.pqZero.erase(std::prev(lowerStar.pqZero.end()));
-        // }
-        if(!lowerStar.pqZero.empty())
-        {
-            auto deltaIt = std::prev(lowerStar.pqZero.end());
-            const Coordinate delta = deltaIt->coord;
-            lowerStar.pqZero.erase(deltaIt);
-            markCritical(lowerStar, delta);
-        }
+        const auto sigmaIt = m_splxFilt.find(sigma);
+        sigmaIt->second.gradPair = taoIt->first;
+        taoIt->second.gradPair = sigmaIt->first;
     }
 }
 
-void nsCCR::CubicalComplexRefinement::computeGradPair()
+void nsCCR::CubicalComplexRefinement::markCrit(Coordinate coord)
 {
-    for(const auto& vertexEntry : m_vertFilt)
+    m_columnToReduce[coord.dim()].push_back(getCellOrder(coord));
+}
+
+void nsCCR::CubicalComplexRefinement::computeApntPair()
+{
+    // Determine every pair before collecting unmatched cells.
+    for(const auto& vertEntry : m_vertFilt)
     {
-        processLowerStar(vertexEntry.first);
+        if(!findApntPair(vertEntry.first))
+        {
+            markCrit(vertEntry.first);
+        }
+    }
+    for(const auto& splxEntry : m_splxFilt)
+    {
+        if(splxEntry.first.dim() < 3)
+        {
+            if(!findApntPair(splxEntry.first))
+            {
+                continue;
+            }
+        }
+    }
+    for(const auto& splxEntry : m_splxFilt)
+    {
+        if(splxEntry.second.gradPair.isNull())
+        {
+            markCrit(splxEntry.first);
+        }
     }
     for(auto& columns : m_columnToReduce)
     {
-        std::sort(columns.begin(), columns.end(),std::greater<CellOrder>());
+        std::sort(columns.begin(), columns.end(), std::greater<CellOrder>());
     }
 }
 
@@ -550,9 +434,9 @@ void nsCCR::CubicalComplexRefinement::computePersPair(int dim, std::vector<std::
                     addCobd(indexColToAdd,factor, dim, Vk,Rk);
                     pivot=getPivot(Rk);
                 }
-                else if(m_splxFilt[pivot.coord].gradPair!=nullptr)
+                else if(!m_splxFilt[pivot.coord].gradPair.isNull())
                 {
-                    Coordinate apparentFacet=*m_splxFilt[pivot.coord].gradPair;
+                    Coordinate apparentFacet=m_splxFilt[pivot.coord].gradPair;
                     Coefficient coef=getCobdCoef(apparentFacet, pivot.coord);
                     // Incidence coefficients are +/-1, so coef is its own inverse.
                     Coefficient factor=(m_modulus-pivot.coef*coef%m_modulus)%m_modulus;

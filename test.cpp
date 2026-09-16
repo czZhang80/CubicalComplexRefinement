@@ -274,6 +274,46 @@ nsCCR::CubicalComplexRefinement generateFrom3dImg(
     return nsCCR::CubicalComplexRefinement(&scalarField, prime);
 }
 
+nsCCR::CubicalComplexRefinement ccrExample(int n)
+{
+    switch(n)
+    {
+        case 0:
+        {
+            constexpr uint16_t rootGridSize = static_cast<uint16_t>(1u << nsCCR::g_secondSubdivNum);
+            constexpr uint16_t childGridSize = static_cast<uint16_t>(rootGridSize / 2);
+
+            // Build a 2 x 1 x 1 root grid. The first root cube is subdivided once;
+            // the second root cube remains a single leaf.
+            TestOctreeSF scalarField({2, 1, 1});
+            for(int x = 0; x < 2; ++x)
+            {
+                for(int y = 0; y < 2; ++y)
+                {
+                    for(int z = 0; z < 2; ++z)
+                    {
+                        scalarField.addLeaf({
+                            static_cast<uint16_t>(x * childGridSize),
+                            static_cast<uint16_t>(y * childGridSize),
+                            static_cast<uint16_t>(z * childGridSize)}, childGridSize);
+                    }
+                }
+            }
+            scalarField.addLeaf({rootGridSize, 0, 0}, rootGridSize);
+            return nsCCR::CubicalComplexRefinement(&scalarField, 5);
+        }
+        case 1:
+            return generateFrom3dImg("D:\\projects\\Cubical Complex Refinement\\CubicalComplexRefinement\\example\\image_10x10x10_spherical_shell.txt",
+            {10,10,10},5);
+        case 2:
+            return generateFrom3dImg("D:\\projects\\Cubical Complex Refinement\\CubicalComplexRefinement\\example\\image_10x10x10_spherical_shell.txt",
+            {10,10,10},5);
+        default:
+            throw std::invalid_argument("Invalid example number.");
+    }
+}
+
+
 void testBuildVFilt()
 {
     constexpr uint16_t rootGridSize = static_cast<uint16_t>(1u << nsCCR::g_secondSubdivNum);
@@ -319,8 +359,7 @@ int isApparentPair(nsCCR::CubicalComplexRefinement* ccr,
     {
         return -1;
     }
-    if(ccr->m_splxFilt.find(coord1) == ccr->m_splxFilt.end()
-       || ccr->m_splxFilt.find(coord2) == ccr->m_splxFilt.end())
+    if(!ccr->contain(coord1) || !ccr->contain(coord2))
     {
         return -1;
     }
@@ -330,14 +369,14 @@ int isApparentPair(nsCCR::CubicalComplexRefinement* ccr,
     int returnVal;
     if(coord1.dim() - coord2.dim() == 1)
     {
-        cell1 = CellOrder(ccr->m_splxFilt[coord2].filtration, coord2);
-        cell2 = CellOrder(ccr->m_splxFilt[coord1].filtration, coord1);
+        cell1 = ccr->getCellOrder(coord2);
+        cell2 = ccr->getCellOrder(coord1);
         returnVal = 2;
     }
     else if(coord1.dim() - coord2.dim() == -1)
     {
-        cell1 = CellOrder(ccr->m_splxFilt[coord1].filtration, coord1);
-        cell2 = CellOrder(ccr->m_splxFilt[coord2].filtration, coord2);
+        cell1 = ccr->getCellOrder(coord1);
+        cell2 = ccr->getCellOrder(coord2);
         returnVal = 1;
     }
     else
@@ -353,11 +392,12 @@ int isApparentPair(nsCCR::CubicalComplexRefinement* ccr,
         {
             continue;
         }
-        if(cell2 > CellOrder(ccr->m_splxFilt[cofacetI].filtration, cofacetI))
+        const CellOrder cofacetOrder = ccr->getCellOrder(cofacetI);
+        if(cell2 > cofacetOrder)
         {
             return 0;
         }
-        if(cell2 == CellOrder(ccr->m_splxFilt[cofacetI].filtration, cofacetI))
+        if(cell2 == cofacetOrder)
         {
             incidence = true;
         }
@@ -375,103 +415,254 @@ int isApparentPair(nsCCR::CubicalComplexRefinement* ccr,
         }
         for(nsCCR::Coordinate f : facetI)
         {
-            if(cell1 < CellOrder(ccr->m_splxFilt[f].filtration, f))
+            if(cell1 < ccr->getCellOrder(f))
             {
                 return 0;
             }
         }
     }
-    if(std::abs(cell1.filtration - cell2.filtration) > nsCCR::g_zero)
+    if(cell1.filtration < cell2.filtration)
     {
         returnVal += 2;
     }
     return returnVal;
 }
 
-void testProcessLowerStar()
+int testHaveApparentPair(nsCCR::CubicalComplexRefinement *ccr, nsCCR::CubicalComplexRefinement::CellOrder splx)
 {
-    constexpr uint16_t rootGridSize = static_cast<uint16_t>(1u << nsCCR::g_secondSubdivNum);
-    constexpr uint16_t childGridSize = static_cast<uint16_t>(rootGridSize / 2);
-
-    TestOctreeSF scalarField({2, 1, 1});
-    for(int x = 0; x < 2; ++x)
+    if(ccr == nullptr || !ccr->contain(splx.coord))
     {
-        for(int y = 0; y < 2; ++y)
+        return -1;
+    }
+
+    const nsCCR::Coordinate& coord = splx.coord;
+
+    // Check whether this cell is the lower-dimensional member of an
+    // apparent pair.
+    if(coord.dim() < 3)
+    {
+        for(int i = 0; i < (3 - coord.dim()) * 2; ++i)
         {
-            for(int z = 0; z < 2; ++z)
+            nsCCR::Coordinate cofacet;
+            if(ccr->getCofacetI(i, coord, cofacet) != 0)
             {
-                scalarField.addLeaf({
-                    static_cast<uint16_t>(x * childGridSize),
-                    static_cast<uint16_t>(y * childGridSize),
-                    static_cast<uint16_t>(z * childGridSize)}, childGridSize);
+                const int pairType = isApparentPair(ccr, coord, cofacet);
+                if(pairType > 0)
+                {
+                    return pairType;
+                }
             }
         }
     }
-    scalarField.addLeaf({rootGridSize, 0, 0}, rootGridSize);
 
-    nsCCR::CubicalComplexRefinement ccr;
-    ccr.buildVFilt(&scalarField);
-    ccr.computeGradPair();
-    for(auto node : ccr.m_splxFilt)
+    // Check whether this cell is the higher-dimensional member of an
+    // apparent pair. A geometric facet may consist of several stored cells.
+    for(int i = 0; i < coord.dim() * 2; ++i)
     {
-        if(node.second.gradPair == nullptr)
+        std::vector<nsCCR::Coordinate> facets;
+        if(ccr->getFacetI(i, coord, facets) < 0)
         {
-            printNodeRef(node.first);
-            const auto& column = ccr.m_columnToReduce[node.first.dim()];
-            const bool contains = std::find(
-                column.begin(), column.end(),
-                nsCCR::CubicalComplexRefinement::CellOrder(node.second.filtration, node.first))
-                != column.end();
-            std::cout << (contains ? "true" : "false") << std::endl;
+            return -1;
         }
-        else if(isApparentPair(&ccr, node.first, *node.second.gradPair) <= 0)
+
+        for(const nsCCR::Coordinate& facet : facets)
         {
-            throw std::range_error("wrong");
+            const int pairType = isApparentPair(ccr, coord, facet);
+            if(pairType > 0)
+            {
+                return pairType;
+            }
+        }
+    }
+
+    return 0;
+}
+
+void testcomputeApntPair()
+{
+    nsCCR::CubicalComplexRefinement ccr = ccrExample(0);
+    ccr.computeApntPair();
+
+    int apparentPairCount = 0, criticalSplxCount = 0;
+    // step1: diirect check: every paired cell are apparent cells, and unpaired cells 
+    // added into column to reduce
+    for(auto vert:ccr.m_vertFilt)
+    {
+        if(!vert.second.gradPair.isNull())
+        {
+            const auto partnerIt = ccr.m_splxFilt.find(vert.second.gradPair);
+            if(partnerIt == ccr.m_splxFilt.end()||
+                partnerIt->second.gradPair.data()!=vert.first.data())
+            {
+                throw std::range_error("unclosed apparent pair");
+            }
+            if(isApparentPair(&ccr, vert.first, vert.second.gradPair) <= 0)
+            {
+                throw std::range_error("Invalid apparent pair");
+            }
+            ++apparentPairCount;
+        }
+        else
+        {            
+            const auto& column = ccr.m_columnToReduce[0];
+            if(std::find(column.begin(), column.end(), ccr.getCellOrder(vert.first))
+               == column.end())
+            {
+                throw std::range_error("critical pair not in column to reduce");
+            }
+            criticalSplxCount++;
+        }
+    }
+    for(auto splx:ccr.m_splxFilt)
+    {
+        if(!splx.second.gradPair.isNull())
+        {
+            nsCCR::Coordinate reversePair;
+            if(splx.second.gradPair.dim()==0)
+            {
+                const auto partnerIt = ccr.m_vertFilt.find(splx.second.gradPair);
+                if(partnerIt==ccr.m_vertFilt.end())
+                {
+                    throw std::range_error("invalid coordinate in gradient pair");
+                }
+                reversePair=partnerIt->second.gradPair;
+            }
+            else
+            {
+                const auto partnerIt = ccr.m_splxFilt.find(splx.second.gradPair);
+                                if(partnerIt==ccr.m_splxFilt.end())
+                {
+                    throw std::range_error("invalid coordinate in gradient pair");
+                }
+
+                reversePair=partnerIt->second.gradPair;
+            }
+            if(reversePair.data()!=splx.first.data())
+            {
+                throw std::range_error("unclosed apparent pair");
+            }
+            if(isApparentPair(&ccr, splx.first, splx.second.gradPair) <= 0)
+            {
+                throw std::range_error("Invalid apparent pair");
+            }
+            ++apparentPairCount;
+        }
+        else
+        {
+            const auto& column = ccr.m_columnToReduce[splx.first.dim()];
+            if(std::find(column.begin(), column.end(), ccr.getCellOrder(splx.first))
+               == column.end())
+            {
+                throw std::range_error("critical pair not in column to reduce");
+            }
+            criticalSplxCount++;
+        }
+    }
+    std::cout << "Paired cell count: " << apparentPairCount << std::endl;
+    std::cout << "Critical simplex count: " << criticalSplxCount << std::endl;
+    // step 2: reverse check: every simplex in column to reduce sre not apparent
+    for(int i=0;i<ccr.m_columnToReduce.size();i++)
+    {
+        auto& currectCol=ccr.m_columnToReduce[i];
+        for(auto splx:currectCol)
+        {
+            const int pairType = testHaveApparentPair(&ccr, splx);
+            if(pairType < 0)
+            {
+                throw std::range_error("Invalid cell in column to reduce");
+            }
+            if(pairType > 0)
+            {
+                throw std::range_error("Apparent pair was missed");
+            }
         }
     }
 }
 
-void testcomputePersPair()
-{
-    // constexpr uint16_t rootGridSize = static_cast<uint16_t>(1u << nsCCR::g_secondSubdivNum);
-    // constexpr uint16_t childGridSize = static_cast<uint16_t>(rootGridSize / 2);
+// void testProcessLowerStar()
+// {
+//     constexpr uint16_t rootGridSize = static_cast<uint16_t>(1u << nsCCR::g_secondSubdivNum);
+//     constexpr uint16_t childGridSize = static_cast<uint16_t>(rootGridSize / 2);
 
-    // TestOctreeSF scalarField({2, 1, 1});
-    // for(int x = 0; x < 2; ++x)
-    // {
-    //     for(int y = 0; y < 2; ++y)
-    //     {
-    //         for(int z = 0; z < 2; ++z)
-    //         {
-    //             scalarField.addLeaf({
-    //                 static_cast<uint16_t>(x * childGridSize),
-    //                 static_cast<uint16_t>(y * childGridSize),
-    //                 static_cast<uint16_t>(z * childGridSize)}, childGridSize);
-    //         }
-    //     }
-    // }
-    // scalarField.addLeaf({rootGridSize, 0, 0}, rootGridSize);
+//     TestOctreeSF scalarField({2, 1, 1});
+//     for(int x = 0; x < 2; ++x)
+//     {
+//         for(int y = 0; y < 2; ++y)
+//         {
+//             for(int z = 0; z < 2; ++z)
+//             {
+//                 scalarField.addLeaf({
+//                     static_cast<uint16_t>(x * childGridSize),
+//                     static_cast<uint16_t>(y * childGridSize),
+//                     static_cast<uint16_t>(z * childGridSize)}, childGridSize);
+//             }
+//         }
+//     }
+//     scalarField.addLeaf({rootGridSize, 0, 0}, rootGridSize);
+
+//     nsCCR::CubicalComplexRefinement ccr;
+//     ccr.buildVFilt(&scalarField);
+//     ccr.computeGradPair();
+//     for(auto node : ccr.m_splxFilt)
+//     {
+//         if(node.second.gradPair == nullptr)
+//         {
+//             printNodeRef(node.first);
+//             const auto& column = ccr.m_columnToReduce[node.first.dim()];
+//             const bool contains = std::find(
+//                 column.begin(), column.end(),
+//                 nsCCR::CubicalComplexRefinement::CellOrder(node.second.filtration, node.first))
+//                 != column.end();
+//             std::cout << (contains ? "true" : "false") << std::endl;
+//         }
+//         else if(isApparentPair(&ccr, node.first, *node.second.gradPair) <= 0)
+//         {
+//             throw std::range_error("wrong");
+//         }
+//     }
+// }
+
+// void testcomputePersPair()
+// {
+//     // constexpr uint16_t rootGridSize = static_cast<uint16_t>(1u << nsCCR::g_secondSubdivNum);
+//     // constexpr uint16_t childGridSize = static_cast<uint16_t>(rootGridSize / 2);
+
+//     // TestOctreeSF scalarField({2, 1, 1});
+//     // for(int x = 0; x < 2; ++x)
+//     // {
+//     //     for(int y = 0; y < 2; ++y)
+//     //     {
+//     //         for(int z = 0; z < 2; ++z)
+//     //         {
+//     //             scalarField.addLeaf({
+//     //                 static_cast<uint16_t>(x * childGridSize),
+//     //                 static_cast<uint16_t>(y * childGridSize),
+//     //                 static_cast<uint16_t>(z * childGridSize)}, childGridSize);
+//     //         }
+//     //     }
+//     // }
+//     // scalarField.addLeaf({rootGridSize, 0, 0}, rootGridSize);
 
     
 
-    nsCCR::CubicalComplexRefinement ccr=
-    generateFrom3dImg("D:\\projects\\Cubical Complex Refinement\\CubicalComplexRefinement\\example\\image_10x10x10_spherical_shell.txt",
-    {10,10,10},5);
-    std::vector<std::pair<nsCCR::CubicalComplexRefinement::CellOrder,
-                          nsCCR::CubicalComplexRefinement::CellOrder>> persPair;
-    ccr.computeGradPair();
-    for(int i = 0; i < 3; ++i)
-    {
-        persPair.clear();
-        std::cout << "Persistent pair in dim " + std::to_string(i) << std::endl;
-        ccr.computePersPair(i, persPair);
-        for(auto pp : persPair)
-        {
-            std::string death=(pp.second.filtration-nsCCR::g_infty)>-nsCCR::g_zero?"inf":std::to_string(pp.second.filtration);
+//     nsCCR::CubicalComplexRefinement ccr=
+//     generateFrom3dImg("D:\\projects\\Cubical Complex Refinement\\CubicalComplexRefinement\\example\\image_10x10x10_spherical_shell.txt",
+//     {10,10,10},5);
+//     std::vector<std::pair<nsCCR::CubicalComplexRefinement::CellOrder,
+//                           nsCCR::CubicalComplexRefinement::CellOrder>> persPair;
+//     ccr.computeGradPair();
+//     for(int i = 0; i < 3; ++i)
+//     {
+//         persPair.clear();
+//         std::cout << "Persistent pair in dim " + std::to_string(i) << std::endl;
+//         ccr.computePersPair(i, persPair);
+//         for(auto pp : persPair)
+//         {
+//             std::string death=(pp.second.filtration-nsCCR::g_infty)>-nsCCR::g_zero?"inf":std::to_string(pp.second.filtration);
 
-            std::cout << "[" + std::to_string(pp.first.filtration) + ","
-                             + death + ")"
-                      << std::endl;
-        }
-    }
-}
+//             std::cout << "[" + std::to_string(pp.first.filtration) + ","
+//                              + death + ")"
+//                       << std::endl;
+//         }
+//     }
+// }

@@ -50,9 +50,13 @@ nsCCR::CubicalComplexRefinement generateFrom3dImg(
     const std::array<size_t, 3>& dimensions = {10, 10, 10},
     uint16_t prime = 2);
 
+nsCCR::CubicalComplexRefinement ccrExample(int n);
+
 void testBuildVFilt();
 int isApparentPair(nsCCR::CubicalComplexRefinement* ccr,
                    nsCCR::Coordinate coord1,
                    nsCCR::Coordinate coord2);
-void testProcessLowerStar();
+int testHaveApparentPair(nsCCR::CubicalComplexRefinement* ccr, 
+    nsCCR::CubicalComplexRefinement::CellOrder splx);
+void testcomputeApntPair();
 void testcomputePersPair();
