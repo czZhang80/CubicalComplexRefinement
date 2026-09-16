@@ -1,0 +1,14 @@
+Total intervals: 7
+
+H_0: 1 intervals
+  [0, inf)
+
+H_1: 5 intervals
+  [0, 52)
+  [38, 73)
+  [38, 73)
+  [38, 73)
+  [38, 73)
+
+H_2: 1 intervals
+  [90, 207)

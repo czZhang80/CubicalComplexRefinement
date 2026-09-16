@@ -306,7 +306,7 @@ nsCCR::CubicalComplexRefinement ccrExample(int n)
             return generateFrom3dImg("D:\\projects\\Cubical Complex Refinement\\CubicalComplexRefinement\\example\\image_10x10x10_spherical_shell.txt",
             {10,10,10},5);
         case 2:
-            return generateFrom3dImg("D:\\projects\\Cubical Complex Refinement\\CubicalComplexRefinement\\example\\image_10x10x10_spherical_shell.txt",
+            return generateFrom3dImg("D:\\projects\\Cubical Complex Refinement\\CubicalComplexRefinement\\example\\image_10x10x10.txt",
             {10,10,10},5);
         default:
             throw std::invalid_argument("Invalid example number.");
@@ -480,7 +480,7 @@ int testHaveApparentPair(nsCCR::CubicalComplexRefinement *ccr, nsCCR::CubicalCom
 
 void testcomputeApntPair()
 {
-    nsCCR::CubicalComplexRefinement ccr = ccrExample(0);
+    nsCCR::CubicalComplexRefinement ccr = ccrExample(1);
     ccr.computeApntPair();
 
     int apparentPairCount = 0, criticalSplxCount = 0;
@@ -579,90 +579,31 @@ void testcomputeApntPair()
     }
 }
 
-// void testProcessLowerStar()
-// {
-//     constexpr uint16_t rootGridSize = static_cast<uint16_t>(1u << nsCCR::g_secondSubdivNum);
-//     constexpr uint16_t childGridSize = static_cast<uint16_t>(rootGridSize / 2);
+void testcomputePersPair()
+{
+    nsCCR::CubicalComplexRefinement ccr=ccrExample(2);
+    std::vector<std::pair<nsCCR::CubicalComplexRefinement::real,
+                          nsCCR::CubicalComplexRefinement::real>> persPair;
+    ccr.computeApntPair();
+    for(int i=0;i<ccr.m_Vk.size();i++)
+    {
+        ccr.m_Vk[i].resize(ccr.m_columnToReduce[i].size());
+    }
 
-//     TestOctreeSF scalarField({2, 1, 1});
-//     for(int x = 0; x < 2; ++x)
-//     {
-//         for(int y = 0; y < 2; ++y)
-//         {
-//             for(int z = 0; z < 2; ++z)
-//             {
-//                 scalarField.addLeaf({
-//                     static_cast<uint16_t>(x * childGridSize),
-//                     static_cast<uint16_t>(y * childGridSize),
-//                     static_cast<uint16_t>(z * childGridSize)}, childGridSize);
-//             }
-//         }
-//     }
-//     scalarField.addLeaf({rootGridSize, 0, 0}, rootGridSize);
-
-//     nsCCR::CubicalComplexRefinement ccr;
-//     ccr.buildVFilt(&scalarField);
-//     ccr.computeGradPair();
-//     for(auto node : ccr.m_splxFilt)
-//     {
-//         if(node.second.gradPair == nullptr)
-//         {
-//             printNodeRef(node.first);
-//             const auto& column = ccr.m_columnToReduce[node.first.dim()];
-//             const bool contains = std::find(
-//                 column.begin(), column.end(),
-//                 nsCCR::CubicalComplexRefinement::CellOrder(node.second.filtration, node.first))
-//                 != column.end();
-//             std::cout << (contains ? "true" : "false") << std::endl;
-//         }
-//         else if(isApparentPair(&ccr, node.first, *node.second.gradPair) <= 0)
-//         {
-//             throw std::range_error("wrong");
-//         }
-//     }
-// }
-
-// void testcomputePersPair()
-// {
-//     // constexpr uint16_t rootGridSize = static_cast<uint16_t>(1u << nsCCR::g_secondSubdivNum);
-//     // constexpr uint16_t childGridSize = static_cast<uint16_t>(rootGridSize / 2);
-
-//     // TestOctreeSF scalarField({2, 1, 1});
-//     // for(int x = 0; x < 2; ++x)
-//     // {
-//     //     for(int y = 0; y < 2; ++y)
-//     //     {
-//     //         for(int z = 0; z < 2; ++z)
-//     //         {
-//     //             scalarField.addLeaf({
-//     //                 static_cast<uint16_t>(x * childGridSize),
-//     //                 static_cast<uint16_t>(y * childGridSize),
-//     //                 static_cast<uint16_t>(z * childGridSize)}, childGridSize);
-//     //         }
-//     //     }
-//     // }
-//     // scalarField.addLeaf({rootGridSize, 0, 0}, rootGridSize);
-
+    for(int i=0;i<ccr.m_columnToReduce.size();i++)
+    {
+        persPair.clear();
+        std::cout << "Persistent pair in dim" << i << std::endl;
+        ccr.computePersPair(i,persPair);
     
-
-//     nsCCR::CubicalComplexRefinement ccr=
-//     generateFrom3dImg("D:\\projects\\Cubical Complex Refinement\\CubicalComplexRefinement\\example\\image_10x10x10_spherical_shell.txt",
-//     {10,10,10},5);
-//     std::vector<std::pair<nsCCR::CubicalComplexRefinement::CellOrder,
-//                           nsCCR::CubicalComplexRefinement::CellOrder>> persPair;
-//     ccr.computeGradPair();
-//     for(int i = 0; i < 3; ++i)
-//     {
-//         persPair.clear();
-//         std::cout << "Persistent pair in dim " + std::to_string(i) << std::endl;
-//         ccr.computePersPair(i, persPair);
-//         for(auto pp : persPair)
-//         {
-//             std::string death=(pp.second.filtration-nsCCR::g_infty)>-nsCCR::g_zero?"inf":std::to_string(pp.second.filtration);
-
-//             std::cout << "[" + std::to_string(pp.first.filtration) + ","
-//                              + death + ")"
-//                       << std::endl;
-//         }
-//     }
-// }
+        for(auto pp : persPair)
+        {
+            if(pp.first==pp.second)
+            {
+                continue;
+            }
+            std::string death=(pp.second-nsCCR::g_infty)>-nsCCR::g_zero?"inf":std::to_string(pp.second);
+            std::cout << "[" + std::to_string(pp.first) + "," + death + ")" << std::endl;
+        }
+    }
+}

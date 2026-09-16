@@ -64,11 +64,20 @@ public:
         return columns.at(i);
     }
 
-    void appendColumn(matColumn column)
+    // void appendColumn(matColumn column)
+    // {
+    //     columns.push_back(std::move(column));
+    // }
+
+    void resize(size_t size)
     {
-        columns.push_back(std::move(column));
+        columns.resize(size);
     }
 
+    void setColumn(size_t i, matColumn column)
+    {
+        columns[i] = std::move(column);
+    }
 private:
     std::vector<matColumn> columns;
 };
@@ -685,8 +694,10 @@ public:
         return coefficient;
     };
 
-    inline void getTotalFilt(const Coordinate coord, real& filtration, Coordinate& domiVert)
+    inline CellOrder getCellOrder(const Coordinate coord,const Coefficient coef=0)
     {
+        real filtration;
+        Coordinate domiVert;
         if(coord.dim()==0)
         {
             filtration=m_vertFilt[coord].filtration;
@@ -697,7 +708,7 @@ public:
             domiVert=m_splxFilt[coord].domiVert;
             filtration=m_vertFilt[domiVert].filtration;
         }
-        return;
+        return CellOrder(filtration,domiVert,coord,coef);
     }
 
     inline real getFiltration(const Coordinate& coord) const
@@ -716,8 +727,6 @@ public:
         return CellOrder(m_vertFilt.at(owner).filtration, owner, coord);
     }
     // part 2: persistent homology calculation
-
-    void computeGradPair();
 
     bool oldestCofacet(Coordinate sigma, Coordinate& tao);
 
@@ -739,7 +748,7 @@ public:
 
     void computeApntPair();
 
-    /*
+    
     using ReduceCol=std::priority_queue<CellOrder, std::vector<CellOrder>,std::greater<CellOrder>>;
     // Description:
     // initialize a column Rk=D Vk, similar to init_coboundary_and_get_pivot in Ripser
@@ -769,10 +778,10 @@ public:
     // Parameters: 
     // dim: I, 
     // persPair: O,
-    void computePersPair(int dim, std::vector<std::pair<CellOrder,CellOrder>>& persPair);
+    void computePersPair(int dim, std::vector<std::pair<real,real>>& persPair);
 
-    void computePH();
-    */
+    void computePH(std::vector<std::pair<real, real>> &persPair);
+    
    
     // part 3: persistent homology update
 

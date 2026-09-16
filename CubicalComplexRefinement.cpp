@@ -299,6 +299,10 @@ void nsCCR::CubicalComplexRefinement::markCrit(Coordinate coord)
 
 void nsCCR::CubicalComplexRefinement::computeApntPair()
 {
+    for(int i=0;i<m_columnToReduce.size();i++)
+    {
+        m_columnToReduce[i].clear();
+    }
     // Determine every pair before collecting unmatched cells.
     for(const auto& vertEntry : m_vertFilt)
     {
@@ -330,7 +334,7 @@ void nsCCR::CubicalComplexRefinement::computeApntPair()
     }
 }
 
-/*
+
 nsCCR::CubicalComplexRefinement::CellOrder nsCCR::CubicalComplexRefinement::initCol(Coordinate splx, ReduceCol& Rk)
 {
     int d=splx.dim();
@@ -340,7 +344,7 @@ nsCCR::CubicalComplexRefinement::CellOrder nsCCR::CubicalComplexRefinement::init
         const int incidence=getCofacetI(i,splx,cofacet);
         if(incidence==0) continue;
         Coefficient coef=incidence>0?1:(m_modulus-1);
-        Rk.push(CellOrder(m_splxFilt[cofacet].filtration,cofacet,coef));
+        Rk.push(getCellOrder(cofacet,coef));
     }
     return getPivot(Rk);
 }
@@ -358,7 +362,7 @@ inline nsCCR::CubicalComplexRefinement::CellOrder nsCCR::CubicalComplexRefinemen
         }
         if(pivot.coef!=0) return pivot;
     }
-    return CellOrder(0,0);
+    return CellOrder(0.0,Coordinate(),Coordinate(),0.0);
 }
 
 inline nsCCR::CubicalComplexRefinement::CellOrder nsCCR::CubicalComplexRefinement::getPivot(ReduceCol& Rk)
@@ -401,7 +405,7 @@ void nsCCR::CubicalComplexRefinement::addCobd(int index, Coefficient factor, int
 
 void nsCCR::CubicalComplexRefinement::addSplxCobd(Coordinate splx, Coefficient factor, int dim, ReduceCol &Vk, ReduceCol &Rk)
 {
-    Vk.push(CellOrder(m_splxFilt.find(splx)->second.filtration,splx,factor));
+    Vk.push(getCellOrder(splx,factor));
     for(int i=0;i<2*(3-dim);i++)
     {
         Coordinate cofacet;
@@ -409,20 +413,24 @@ void nsCCR::CubicalComplexRefinement::addSplxCobd(Coordinate splx, Coefficient f
         if(incidence==0) continue;
         Coefficient coef=incidence>0?1:(m_modulus-1);
         coef=coef*factor%m_modulus;
-        Rk.push(CellOrder(m_splxFilt.find(cofacet)->second.filtration,cofacet,coef));
+        Rk.push(getCellOrder(cofacet,coef));
     }
 }
 
-void nsCCR::CubicalComplexRefinement::computePersPair(int dim, std::vector<std::pair<CellOrder, CellOrder>> &persPair)
+void nsCCR::CubicalComplexRefinement::computePersPair(int dim, std::vector<std::pair<real, real>> &persPair)
 {
     for(int i=0;i<m_columnToReduce[dim].size();i++)
     {
-        m_Vk[dim].appendColumn({});
+        if(!m_Vk[dim].column(i).empty())// a cleared column cannot have itself as Vk entry only
+        {
+            continue;
+        }
+        // m_Vk[dim].appendColumn({});
         ReduceCol Rk,Vk;
         CellOrder pivot=initCol(m_columnToReduce[dim][i].coord,Rk);
         while(true)
         {
-            if(pivot.coord.data()!=0)
+            if(!(pivot==CellOrder(0.0,Coordinate(),Coordinate(),0.0)))
             {
                 auto pair = m_pivotCol.find(pivot);
                 if(pair!=m_pivotCol.end())
@@ -445,7 +453,7 @@ void nsCCR::CubicalComplexRefinement::computePersPair(int dim, std::vector<std::
                 }
                 else// persistent pair
                 {
-                    persPair.push_back({m_columnToReduce[dim][i],pivot});
+                    persPair.push_back({m_columnToReduce[dim][i].filtration,pivot.filtration});
                     m_pivotCol.insert({pivot,i});
                     while(true)
                     {
@@ -453,16 +461,44 @@ void nsCCR::CubicalComplexRefinement::computePersPair(int dim, std::vector<std::
                         if(e.coef==0) break;
                         m_Vk[dim].column(i).push_back(e);
                     }
+
+                    // clearing
+                    if(dim==m_columnToReduce.size()-1)// max dimension
+                    {
+                        continue;
+                    }
+                    auto pivotIt = std::find(m_columnToReduce[dim+1].begin(),m_columnToReduce[dim+1].end(),pivot);
+                    int pivotPos=std::distance(m_columnToReduce[dim+1].begin(),pivotIt);
+                    popPivot(Rk);
+                    while(true)
+                    {
+                        CellOrder e=popPivot(Rk);
+                        if(e.coef==0) break;
+                        m_Vk[dim+1].column(pivotPos).push_back(e);
+                    }
                     break;
                 }
             }
             else
             {
                 //Rk==0, a infinite column
-                persPair.push_back({m_columnToReduce[dim][i],CellOrder(g_infty,0)});
+                persPair.push_back({m_columnToReduce[dim][i].filtration,g_infty});
                 break;
             }
         }
     }
 }
-*/
+
+void nsCCR::CubicalComplexRefinement::computePH(std::vector<std::pair<real, real>> &persPair)
+{
+    computeApntPair();
+    // init m_Vk
+    for(int i=0;i<m_Vk.size();i++)
+    {
+        m_Vk[i].resize(m_columnToReduce[i].size());
+    }
+    for(int i=0;i<m_columnToReduce.size();i++)
+    {
+        computePersPair(i,persPair);
+    }
+}
