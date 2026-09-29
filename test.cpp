@@ -303,10 +303,10 @@ nsCCR::CubicalComplexRefinement ccrExample(int n)
             return nsCCR::CubicalComplexRefinement(&scalarField, 5);
         }
         case 1:
-            return generateFrom3dImg("D:\\projects\\Cubical Complex Refinement\\CubicalComplexRefinement\\example\\image_10x10x10_spherical_shell.txt",
+            return generateFrom3dImg("D:\\CProjects\\Cubical Complex Refinement\\CubicalComplexRefinement\\example\\image_10x10x10_spherical_shell.txt",
             {10,10,10},5);
         case 2:
-            return generateFrom3dImg("D:\\projects\\Cubical Complex Refinement\\CubicalComplexRefinement\\example\\image_10x10x10.txt",
+            return generateFrom3dImg("D:\\CProjects\\Cubical Complex Refinement\\CubicalComplexRefinement\\example\\image_10x10x10.txt",
             {10,10,10},5);
         default:
             throw std::invalid_argument("Invalid example number.");

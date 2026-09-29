@@ -11,13 +11,9 @@ endif()
 
 project ("CubicalComplexRefinement")
 
-find_package(Eigen3 3.3 REQUIRED NO_MODULE)
-
 # 将源代码添加到此项目的可执行文件。
 add_executable (CubicalComplexRefinement "CubicalComplexRefinement.cpp" "CubicalComplexRefinement.h" "main.cpp" "test.h"
   test.cpp)
-
-target_link_libraries(CubicalComplexRefinement PRIVATE Eigen3::Eigen)
 
 if (CMAKE_VERSION VERSION_GREATER 3.12)
   set_property(TARGET CubicalComplexRefinement PROPERTY CXX_STANDARD 20)

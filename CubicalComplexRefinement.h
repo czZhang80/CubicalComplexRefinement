@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -15,7 +16,7 @@
 #include <queue>
 #include <set>
 #include <stack>
-
+#include <map>
 #include "OctreeSF.h"
 
 namespace nsCCR
@@ -64,11 +65,6 @@ public:
         return columns.at(i);
     }
 
-    // void appendColumn(matColumn column)
-    // {
-    //     columns.push_back(std::move(column));
-    // }
-
     void resize(size_t size)
     {
         columns.resize(size);
@@ -77,6 +73,227 @@ public:
     void setColumn(size_t i, matColumn column)
     {
         columns[i] = std::move(column);
+    }
+
+    // Column[j] += coef * Column[i] using positional, dense entry arithmetic.
+    // Both columns must have the same number of entries; no modulus is applied.
+    // void addColumn(Entry coef, size_t i,size_t j)
+    // {
+    //     const matColumn& source = columns.at(i);
+    //     matColumn& destination = columns.at(j);
+    //     if(source.size() != destination.size())
+    //     {
+    //         throw std::invalid_argument("Cannot add matrix columns with different row counts.");
+    //     }
+
+    //     for(size_t row = 0; row < source.size(); ++row)
+    //     {
+    //         destination[row] += coef * source[row];
+    //     }
+    // }
+
+    // Add or combine one sparse entry in the given column over Z/modulus.
+    void addEntry(size_t columnIndex, Entry entry, Coefficient modulus)
+    {
+        if(!isPrime(modulus))
+        {
+            throw std::invalid_argument("The coefficient modulus must be prime.");
+        }
+
+        entry.coef = static_cast<Coefficient>(entry.coef % modulus);
+        if(entry.coef == 0)
+        {
+            return;
+        }
+
+        matColumn& destination = columns.at(columnIndex);
+        auto existing = std::find(destination.begin(), destination.end(), entry);
+        if(existing == destination.end())
+        {
+            destination.push_back(std::move(entry));
+            return;
+        }
+
+        existing->coef = static_cast<Coefficient>(
+            (static_cast<uint64_t>(existing->coef) + entry.coef) % modulus);
+        if(existing->coef == 0)
+        {
+            destination.erase(existing);
+        }
+    }
+
+    // Column[j] += factor * Column[i] over Z/modulus, matching sparse row labels.
+    // Only stored entries participate; implicit diagonal entries are not included.
+    void addCol(Coefficient factor, size_t i, size_t j, Coefficient modulus)
+    {
+        if(!isPrime(modulus))
+        {
+            throw std::invalid_argument("The coefficient modulus must be prime.");
+        }
+
+        factor = static_cast<Coefficient>(factor % modulus);
+        if(factor == 0)
+        {
+            return;
+        }
+
+        // A copy is needed for a self-add because addEntry may invalidate iterators.
+        if(i == j)
+        {
+            const matColumn source = columns.at(i);
+            for(Entry entry : source)
+            {
+                entry.coef = static_cast<Coefficient>(
+                    static_cast<uint64_t>(factor) * entry.coef % modulus);
+                addEntry(j, std::move(entry), modulus);
+            }
+            return;
+        }
+
+        if(i >= columns.size() || j >= columns.size())
+        {
+            throw std::out_of_range("Matrix column index is out of range.");
+        }
+        const matColumn& source = columns[i];
+        for(Entry entry : source)
+        {
+            entry.coef = static_cast<Coefficient>(
+                static_cast<uint64_t>(factor) * entry.coef % modulus);
+            addEntry(j, std::move(entry), modulus);
+        }
+    }
+
+    // Column[i] += factor * colToAdd over Z/modulus, using only stored entries.
+    void addCol(Coefficient factor, size_t i, matColumn& colToAdd, Coefficient modulus)
+    {
+        if(!isPrime(modulus))
+        {
+            throw std::invalid_argument("The coefficient modulus must be prime.");
+        }
+
+        factor = static_cast<Coefficient>(factor % modulus);
+        if(factor == 0)
+        {
+            return;
+        }
+
+        // Reuse the snapshot-based self-add if the supplied column is the target.
+        if(&colToAdd == &columns.at(i))
+        {
+            addCol(factor, i, i, modulus);
+            return;
+        }
+
+        for(Entry entry : colToAdd)
+        {
+            entry.coef = static_cast<Coefficient>(
+                static_cast<uint64_t>(factor) * entry.coef % modulus);
+            addEntry(i, std::move(entry), modulus);
+        }
+    }
+
+    void scaleCol(Coefficient factor, size_t columnIndex, Coefficient modulus)
+    {
+        if(modulus < 2)
+        {
+            throw std::invalid_argument("The coefficient modulus must be at least two.");
+        }
+
+        matColumn& target = columns.at(columnIndex);
+        factor = static_cast<Coefficient>(factor % modulus);
+        if(factor == 0)
+        {
+            target.clear();
+            return;
+        }
+
+        for(Entry& entry : target)
+        {
+            entry.coef = static_cast<Coefficient>(
+                static_cast<uint64_t>(factor) * entry.coef % modulus);
+        }
+    }
+
+    Coefficient coefficient(const Entry& row, size_t columnIndex) const
+    {
+        const matColumn& source = columns.at(columnIndex);
+        const auto entry = std::find(source.begin(), source.end(), row);
+        return entry == source.end() ? 0 : entry->coef;
+    }
+
+    void eraseEntry(const Entry& row, size_t columnIndex)
+    {
+        matColumn& target = columns.at(columnIndex);
+        const auto entry = std::find(target.begin(), target.end(), row);
+        if(entry != target.end())
+        {
+            target.erase(entry);
+        }
+    }
+
+    void sortCol(size_t columnIndex)
+    {
+        matColumn& target = columns.at(columnIndex);
+        std::sort(target.begin(), target.end());
+    }
+
+    // Description:
+    // Move row[i] to row[j], and rows between i,j 1 row forward/backward
+    void moveRow(size_t orig, size_t term)
+    {
+        for(const matColumn& column : columns)
+        {
+            if(orig >= column.size() || term >= column.size())
+            {
+                throw std::out_of_range("Matrix row index is out of range.");
+            }
+        }
+
+        if(orig == term)
+        {
+            return;
+        }
+
+        for(matColumn& column : columns)
+        {
+            if(orig < term)
+            {
+                std::rotate(column.begin() + orig,
+                            column.begin() + orig + 1,
+                            column.begin() + term + 1);
+            }
+            else
+            {
+                std::rotate(column.begin() + term,
+                            column.begin() + orig,
+                            column.begin() + orig + 1);
+            }
+        }
+    }
+
+    void moveCol(size_t orig, size_t term)
+    {
+        if(orig >= columns.size() || term >= columns.size())
+        {
+            throw std::out_of_range("Matrix column index is out of range.");
+        }
+        if(orig == term)
+        {
+            return;
+        }
+
+        if(orig < term)
+        {
+            std::rotate(columns.begin() + orig,
+                        columns.begin() + orig + 1,
+                        columns.begin() + term + 1);
+        }
+        else
+        {
+            std::rotate(columns.begin() + term,
+                        columns.begin() + orig,
+                        columns.begin() + orig + 1);
+        }
     }
 private:
     std::vector<matColumn> columns;
@@ -785,7 +1002,12 @@ public:
    
     // part 3: persistent homology update
 
+    void moveLeft(int dim, int j,int i);
 
+    void moveRight(int dim, int i, int j);
+
+    void MoveUp(int dim, int j,int i);
+    void moveDown(int dim,int i,int j);
 
 //private:
 public:
@@ -798,7 +1020,9 @@ public:
 
     bool phFlag=false;
     std::array<std::vector<CellOrder>,4> m_columnToReduce;
-    std::unordered_map<CellOrder,uint64_t,CellOrderHash> m_pivotCol;
+    // m_pivotCol[dim][k] is the pivot of m_columnToReduce[dim][k].
+    // A null CellOrder represents a zero column.
+    std::array<std::vector<CellOrder>,4> m_pivotCol;
 
     std::array<sparseColMat<CellOrder>,4> m_Vk;
 };

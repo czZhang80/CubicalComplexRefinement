@@ -432,11 +432,13 @@ void nsCCR::CubicalComplexRefinement::computePersPair(int dim, std::vector<std::
         {
             if(!(pivot==CellOrder(0.0,Coordinate(),Coordinate(),0.0)))
             {
-                auto pair = m_pivotCol.find(pivot);
-                if(pair!=m_pivotCol.end())
+                const auto pivotColumn = std::find(
+                    m_pivotCol[dim].begin(), m_pivotCol[dim].end(), pivot);
+                if(pivotColumn != m_pivotCol[dim].end())
                 {
-                    CellOrder otherPivot=pair->first;
-                    uint64_t indexColToAdd=pair->second;
+                    const uint64_t indexColToAdd = static_cast<uint64_t>(
+                        std::distance(m_pivotCol[dim].begin(), pivotColumn));
+                    const CellOrder& otherPivot=*pivotColumn;
                     Coefficient factor=
                     m_modulus - pivot.coef*m_multInvr[otherPivot.coef] % m_modulus;
                     addCobd(indexColToAdd,factor, dim, Vk,Rk);
@@ -454,7 +456,7 @@ void nsCCR::CubicalComplexRefinement::computePersPair(int dim, std::vector<std::
                 else// persistent pair
                 {
                     persPair.push_back({m_columnToReduce[dim][i].filtration,pivot.filtration});
-                    m_pivotCol.insert({pivot,i});
+                    m_pivotCol[dim][i]=pivot;
                     while(true)
                     {
                         CellOrder e=popPivot(Vk);
@@ -492,13 +494,283 @@ void nsCCR::CubicalComplexRefinement::computePersPair(int dim, std::vector<std::
 void nsCCR::CubicalComplexRefinement::computePH(std::vector<std::pair<real, real>> &persPair)
 {
     computeApntPair();
-    // init m_Vk
+    // Initialize V and the column-aligned pivot vectors.
     for(int i=0;i<m_Vk.size();i++)
     {
         m_Vk[i].resize(m_columnToReduce[i].size());
+        m_pivotCol[i].assign(m_columnToReduce[i].size(), CellOrder());
     }
     for(int i=0;i<m_columnToReduce.size();i++)
     {
         computePersPair(i,persPair);
     }
+}
+
+void nsCCR::CubicalComplexRefinement::moveLeft(int dim, int j, int i)
+{
+    if(dim < 0 || dim >= static_cast<int>(m_Vk.size()) || i < 0 || i >= j ||
+       j >= static_cast<int>(m_columnToReduce[dim].size()))
+    {
+        return;
+    }
+
+    auto& cells = m_columnToReduce[dim];
+    auto& pivots = m_pivotCol[dim];
+
+    for(int k = j - 1; k >= i; --k)
+    {
+        // Since k < j, V[k,j] is an explicitly stored off-diagonal entry.
+        const Coefficient coefficient = m_Vk[dim].coefficient(cells[k],j);
+        if(coefficient == 0) continue;
+
+        const Coefficient factor = static_cast<Coefficient>(m_modulus - coefficient);
+
+
+        //Check if pivot(R[k])>pivot(R[j])
+        if(!pivots[k].coord.isNull() && (pivots[j].coord.isNull() || pivots[k] > pivots[j]))
+        {
+            // store donor column
+            sparseColMat<CellOrder>::matColumn donorCol = m_Vk[dim].column(j);
+            CellOrder diagJ=cells[j];
+            diagJ.coef=1;
+
+            // V[j] += factor * V[k].
+            m_Vk[dim].addCol(factor, k, j, m_modulus);
+            // addRow sees only the stored part of V[k]; account for its implicit V[k,k]=1.
+            m_Vk[dim].eraseEntry(cells[k],j);
+
+            // V[k]=donor column
+            m_Vk[dim].setColumn(k, std::move(donorCol));
+            m_Vk[dim].addEntry(k, diagJ, m_modulus);
+            Coefficient invrCoef=m_multInvr[coefficient];
+            m_Vk[dim].scaleCol(invrCoef, k, m_modulus); // set diagonal entry to 1
+            m_Vk[dim].eraseEntry(cells[k],k);
+
+            // swap their pivots and update pivot coefficients
+            std::swap(pivots[j], pivots[k]);
+            pivots[j].coef = static_cast<Coefficient>(
+                static_cast<uint64_t>(factor) * pivots[j].coef % m_modulus);
+
+            if(!pivots[k].coord.isNull())
+            {
+                pivots[k].coef = static_cast<Coefficient>(
+                    static_cast<uint64_t>(invrCoef) * pivots[k].coef % m_modulus);
+            }
+        }
+        else
+        {
+            // V[j] += factor * V[k].
+            m_Vk[dim].addCol(factor, k, j, m_modulus);
+            // addRow sees only the stored part of V[k]; account for its implicit V[k,k]=1.
+            m_Vk[dim].eraseEntry(cells[k],j);
+        }
+    }
+
+    // Move column j to i in D, R and V.  V's row move is represented by the
+    // cell coordinates used as sparse row labels.
+    std::rotate(cells.begin() + i, cells.begin() + j, cells.begin() + j + 1);
+    m_Vk[dim].moveCol(j, i);
+    std::rotate(pivots.begin() + i, pivots.begin() + j, pivots.begin() + j + 1);
+}
+
+void nsCCR::CubicalComplexRefinement::moveRight(int dim, int i, int j)
+{
+    // assemble K={column indexes of V, s.t. V[i,k]!=0}={k1,...ks} //here k1=i
+    CellOrder cellI=m_columnToReduce[dim][i];
+    std::vector<int> K;
+    for(int k=i+1;k<m_columnToReduce[dim].size();k++)
+    {
+        if(m_Vk[dim].coefficient(cellI,k)!=0)
+        {
+            K.push_back(k);
+        }
+    }
+    auto donorV=m_Vk[dim].column(i);
+    // A saved donor must include the diagonal that is implicit in matrix storage.
+    CellOrder donorDiagonal=cellI;
+    donorDiagonal.coef=1;
+    donorV.push_back(donorDiagonal);
+    Coefficient donorRowCoef=1; // coef of donor column at celli 
+    CellOrder donorPiv=m_pivotCol[dim][i];
+    for(auto ki:K)
+    {
+        const Coefficient rowCoef=m_Vk[dim].coefficient(cellI,ki);
+        const Coefficient coef=static_cast<Coefficient>(m_modulus -
+            static_cast<uint64_t>(rowCoef)*m_multInvr[donorRowCoef]%m_modulus);
+        if(m_pivotCol[dim][ki]>donorPiv)
+        {
+            // V[ki]+=coef*donor_V
+            m_Vk[dim].addCol(coef, ki, donorV, m_modulus);
+        }
+        else
+        {
+            auto nextDonorV=m_Vk[dim].column(ki);
+            CellOrder nextDonorDiagonal=m_columnToReduce[dim][ki];
+            nextDonorDiagonal.coef=1;
+            nextDonorV.push_back(nextDonorDiagonal);
+            const CellOrder nextDonorPiv=m_pivotCol[dim][ki];
+
+            m_Vk[dim].addCol(coef,ki,donorV,m_modulus);
+            // R is implicit through D*V; this branch gives it the donor's pivot.
+            m_pivotCol[dim][ki]=donorPiv;
+            if(!donorPiv.coord.isNull())
+            {
+                m_pivotCol[dim][ki].coef=static_cast<Coefficient>(
+                    static_cast<uint64_t>(coef)*donorPiv.coef%m_modulus);
+            }
+
+            donorV=std::move(nextDonorV);
+            donorPiv=nextDonorPiv;
+            donorRowCoef=rowCoef;
+        }
+    }
+    // Move column i to j in D, R and V. V's row permutation follows the
+    // cell coordinates used as sparse row labels.
+    auto& cells=m_columnToReduce[dim];
+    auto& pivots=m_pivotCol[dim];
+    std::rotate(cells.begin()+i,cells.begin()+i+1,cells.begin()+j+1);
+    m_Vk[dim].moveCol(i,j);
+    std::rotate(pivots.begin()+i,pivots.begin()+i+1,pivots.begin()+j+1);
+}
+
+void nsCCR::CubicalComplexRefinement::MoveUp(int dim, int j, int i)
+{
+    // Suppose we already changed the filtration of simplex corresponding to row j.
+    // But its order in m_columnToReduce did not update yet.
+    // We update m_Vk to make it still reduced, but do not update m_columnToRed yet.
+
+    // Step 1: reconstruct DV[k] for the column whose pivot is cellJ.
+    CellOrder cellJ=m_columnToReduce[dim][j];
+    auto cellK0Itr=std::find(m_pivotCol[dim-1].begin(),m_pivotCol[dim-1].end(),cellJ);
+    if(cellK0Itr==m_pivotCol[dim-1].end())
+    {
+        return;
+    }
+    int k0=static_cast<int>(std::distance(m_pivotCol[dim-1].begin(),cellK0Itr));
+    ReduceCol Vk,Rk;
+    addCobd(k0,1,dim-1,Vk,Rk);
+    // popPivot(Rk);
+
+    //step 2: find k1: piv(R[k1])=piv-j(R[k0])
+    CellOrder pivK=getPivot(Rk);
+    if(pivK==cellJ)
+    {
+        return;
+    }
+
+    auto cellK1Ptr = std::find(m_pivotCol[dim-1].begin(),m_pivotCol[dim-1].end(),pivK);
+    m_pivotCol[dim-1][k0]=pivK;
+    if(cellK1Ptr==m_pivotCol[dim-1].end())
+    {
+        return;
+    }
+    int k1=static_cast<int>(std::distance(m_pivotCol[dim-1].begin(),cellK1Ptr));
+    // Coefficients at the shared row pivK, before ordering the two columns.
+    Coefficient pivotCoef0=pivK.coef;
+    Coefficient pivotCoef1=cellK1Ptr->coef;
+    while(true)
+    {
+        // k0=min(K), k1=max(K)
+        if(k0>k1)
+        {
+            std::swap(k0,k1);
+            std::swap(pivotCoef0,pivotCoef1);
+        }
+
+        // Cancel the shared row: pivotCoef1 + factor*pivotCoef0 = 0 (mod p).
+        const Coefficient factor=static_cast<Coefficient>(m_modulus -
+            static_cast<uint64_t>(pivotCoef1)*m_multInvr[pivotCoef0]%m_modulus);
+        m_Vk[dim-1].addCol(factor,k0,k1,m_modulus);
+        CellOrder sourceDiagonal=m_columnToReduce[dim-1][k0];
+        sourceDiagonal.coef=factor;
+        m_Vk[dim-1].addEntry(k1,sourceDiagonal,m_modulus);
+
+        // R is implicit: reconstruct the updated target column as D*V[k1].
+        Vk=ReduceCol();
+        Rk=ReduceCol();
+        addCobd(k1,1,dim-1,Vk,Rk);
+        CellOrder pivotK1=getPivot(Rk);
+        auto cellKItr=std::find(m_pivotCol[dim-1].begin(),m_pivotCol[dim-1].end(),pivotK1);
+        m_pivotCol[dim-1][k1]=pivotK1;
+        if(cellKItr==m_pivotCol[dim-1].end())
+        {
+            break;
+        }
+        k0=static_cast<int>(std::distance(m_pivotCol[dim-1].begin(),cellKItr));
+        pivotCoef0=cellKItr->coef;
+        pivotCoef1=pivotK1.coef;
+    }
+}
+
+void nsCCR::CubicalComplexRefinement::moveDown(int dim, int i, int j)
+{
+    // we update matrixV and pivot column before moving simplex at i down to j
+
+    // step 1: K = {column indexes k of R, s.t. R[i,k]!=0, and piv[k]<j}
+    std::vector<int> K;
+    std::vector<Coefficient> coefK;//coef of R[i,k]
+
+    const CellOrder cellJ=m_columnToReduce[dim][j],cellI=m_columnToReduce[dim][i];
+
+    for(int k=0;k<static_cast<int>(m_columnToReduce[dim-1].size());++k)
+    {
+        const CellOrder& pivot=m_pivotCol[dim-1][k];
+        if(!(pivot>cellJ)) continue;
+
+        ReduceCol Vk,Rk;
+        addCobd(k,1,dim-1,Vk,Rk);
+        while(true)
+        {
+            const CellOrder entry=popPivot(Rk);
+            if(entry.coef==0) break;
+            if(entry==cellI)
+            {
+                K.push_back(k);
+                coefK.push_back(entry.coef);
+                break;
+            }
+        }
+    }
+
+    if(K.empty()) return;
+
+    auto donorCol=m_Vk[dim-1].column(K[0]);
+    // Materialize the donor's implicit diagonal in the saved column.
+    CellOrder donorDiagonal=m_columnToReduce[dim-1][K[0]];
+    donorDiagonal.coef=1;
+    donorCol.push_back(donorDiagonal);
+    CellOrder donorPiv=m_pivotCol[dim-1][K[0]];
+    Coefficient donorCoef=coefK[0];
+    for (int index=1;index<K.size();index++)
+    {
+        int k=K[index];
+        if(m_pivotCol[dim-1][k]>donorPiv)
+        {
+            // V[k]+=coef*donor_column_V to eliminate R[i,k]
+            const Coefficient coef=static_cast<Coefficient>(m_modulus -
+                static_cast<uint64_t>(coefK[index])*m_multInvr[donorCoef]%m_modulus);
+            m_Vk[dim-1].addCol(coef,k,donorCol,m_modulus);
+        }
+        else
+        {
+            // Save the original target, including its implicit diagonal, as the next donor.
+            auto nextDonorCol=m_Vk[dim-1].column(k);
+            CellOrder nextDonorDiagonal=m_columnToReduce[dim-1][k];
+            nextDonorDiagonal.coef=1;
+            nextDonorCol.push_back(nextDonorDiagonal);
+            const CellOrder nextDonorPiv=m_pivotCol[dim-1][k];
+            const Coefficient nextDonorCoef=coefK[index];
+
+            const Coefficient coef=static_cast<Coefficient>(m_modulus -
+                static_cast<uint64_t>(nextDonorCoef)*m_multInvr[donorCoef]%m_modulus);
+            m_Vk[dim-1].addCol(coef,k,donorCol,m_modulus);
+
+            m_pivotCol[dim-1][k]=donorPiv;
+
+            donorCol=std::move(nextDonorCol);
+            donorPiv=nextDonorPiv;
+            donorCoef=nextDonorCoef;
+        }
+    }
+    
 }
