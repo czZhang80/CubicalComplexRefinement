@@ -3,7 +3,7 @@
 #include <initializer_list>
 #include <iterator>
 
-bool nsCCR::CubicalComplexRefinement::insertVertex(
+bool nsCCR::CubicalCplxSubd::insertVertex(
     const Coordinate& coord, real filtration, ExistFacets& existFacets)
 {
     auto result = existFacets[0].emplace(coord);
@@ -16,7 +16,7 @@ bool nsCCR::CubicalComplexRefinement::insertVertex(
     return true;
 }
 
-bool nsCCR::CubicalComplexRefinement::checkAndInst(
+bool nsCCR::CubicalCplxSubd::checkAndInst(
     int dim, const Coordinate& coord, const Coordinate& dominatingVertex,
     ExistFacets& existFacets)
 {
@@ -53,7 +53,7 @@ bool nsCCR::CubicalComplexRefinement::checkAndInst(
     return true;
 }
 
-nsCCR::Coordinate nsCCR::CubicalComplexRefinement::facetDomiVert(
+nsCCR::Coordinate nsCCR::CubicalCplxSubd::facetDomiVert(
     const Coordinate& cell)
 {
     std::vector<Coordinate> facets;
@@ -89,7 +89,7 @@ nsCCR::Coordinate nsCCR::CubicalComplexRefinement::facetDomiVert(
     return dominatingVertex;
 }
 
-void nsCCR::CubicalComplexRefinement::addNode(
+void nsCCR::CubicalCplxSubd::addNode(
     const nsSF::NodeInfo<real>& node,
     const nsSF::OctreeSF<real>* scalarField,
     ExistFacets& existFacets)
@@ -150,7 +150,7 @@ void nsCCR::CubicalComplexRefinement::addNode(
     checkAndInst(3, cube, facetDomiVert(cube), existFacets);
 }
 
-void nsCCR::CubicalComplexRefinement::buildVFilt(const nsSF::OctreeSF<real>* scalarField)
+void nsCCR::CubicalCplxSubd::buildVFilt(const nsSF::OctreeSF<real>* scalarField)
 {
     if(scalarField == nullptr)
     {
@@ -208,7 +208,7 @@ void nsCCR::CubicalComplexRefinement::buildVFilt(const nsSF::OctreeSF<real>* sca
     }
 }
 
-bool nsCCR::CubicalComplexRefinement::oldestCofacet(Coordinate sigma, Coordinate &tao)
+bool nsCCR::CubicalCplxSubd::oldestCofacet(Coordinate sigma, Coordinate &tao)
 {
     bool found = false;
     CellOrder oldest;
@@ -228,7 +228,7 @@ bool nsCCR::CubicalComplexRefinement::oldestCofacet(Coordinate sigma, Coordinate
     return found;
 }
 
-bool nsCCR::CubicalComplexRefinement::youngestFacet(Coordinate tao, Coordinate &sigma)
+bool nsCCR::CubicalCplxSubd::youngestFacet(Coordinate tao, Coordinate &sigma)
 {
     bool found = false;
     CellOrder youngest;
@@ -250,7 +250,7 @@ bool nsCCR::CubicalComplexRefinement::youngestFacet(Coordinate tao, Coordinate &
     return found;
 }
 
-bool nsCCR::CubicalComplexRefinement::findApntPair(Coordinate sigma)
+bool nsCCR::CubicalCplxSubd::findApntPair(Coordinate sigma)
 {
     if(sigma.dim()==0)
     {
@@ -275,7 +275,7 @@ bool nsCCR::CubicalComplexRefinement::findApntPair(Coordinate sigma)
     return false;
 }
 
-void nsCCR::CubicalComplexRefinement::setApntPair(Coordinate sigma, Coordinate tao)
+void nsCCR::CubicalCplxSubd::setApntPair(Coordinate sigma, Coordinate tao)
 {
     const auto taoIt = m_splxFilt.find(tao);
     if(sigma.dim() == 0)
@@ -292,12 +292,12 @@ void nsCCR::CubicalComplexRefinement::setApntPair(Coordinate sigma, Coordinate t
     }
 }
 
-void nsCCR::CubicalComplexRefinement::markCrit(Coordinate coord)
+void nsCCR::CubicalCplxSubd::markCrit(Coordinate coord)
 {
     m_columnToReduce[coord.dim()].push_back(getCellOrder(coord));
 }
 
-void nsCCR::CubicalComplexRefinement::computeApntPair()
+void nsCCR::CubicalCplxSubd::computeApntPair()
 {
     for(int i=0;i<m_columnToReduce.size();i++)
     {
@@ -335,7 +335,7 @@ void nsCCR::CubicalComplexRefinement::computeApntPair()
 }
 
 
-nsCCR::CubicalComplexRefinement::CellOrder nsCCR::CubicalComplexRefinement::initCol(Coordinate splx, ReduceCol& Rk)
+nsCCR::CubicalCplxSubd::CellOrder nsCCR::CubicalCplxSubd::initCol(Coordinate splx, ReduceCol& Rk)
 {
     int d=splx.dim();
     for(int i=0;i<(3-d)*2;i++)
@@ -349,7 +349,7 @@ nsCCR::CubicalComplexRefinement::CellOrder nsCCR::CubicalComplexRefinement::init
     return getPivot(Rk);
 }
 
-inline nsCCR::CubicalComplexRefinement::CellOrder nsCCR::CubicalComplexRefinement::popPivot(ReduceCol& column)
+inline nsCCR::CubicalCplxSubd::CellOrder nsCCR::CubicalCplxSubd::popPivot(ReduceCol& column)
 {
     while(!column.empty())
     {
@@ -365,14 +365,14 @@ inline nsCCR::CubicalComplexRefinement::CellOrder nsCCR::CubicalComplexRefinemen
     return CellOrder(0.0,Coordinate(),Coordinate(),0.0);
 }
 
-inline nsCCR::CubicalComplexRefinement::CellOrder nsCCR::CubicalComplexRefinement::getPivot(ReduceCol& Rk)
+inline nsCCR::CubicalCplxSubd::CellOrder nsCCR::CubicalCplxSubd::getPivot(ReduceCol& Rk)
 {
     CellOrder pivot=popPivot(Rk);
     if(pivot.coef!=0) Rk.push(pivot);
     return pivot;
 }
 
-inline nsCCR::Coefficient nsCCR::CubicalComplexRefinement::getCobdCoef(Coordinate beta, Coordinate alpha)
+inline nsCCR::Coefficient nsCCR::CubicalCplxSubd::getCobdCoef(Coordinate beta, Coordinate alpha)
 {
     int betaAxes[3], alphaAxes[3];
     beta.getExtendDir(betaAxes);
@@ -392,7 +392,7 @@ inline nsCCR::Coefficient nsCCR::CubicalComplexRefinement::getCobdCoef(Coordinat
     return ((k+lowerSide)%2==0)?1:(m_modulus-1);
 }
 
-void nsCCR::CubicalComplexRefinement::addCobd(int index, Coefficient factor, int dim, ReduceCol &Vk, ReduceCol &Rk)
+void nsCCR::CubicalCplxSubd::addCobd(int index, Coefficient factor, int dim, ReduceCol &Vk, ReduceCol &Rk)
 {
     // The original coefficient-1 cell is implicit in the stored reduction column.
     addSplxCobd(m_columnToReduce[dim][index].coord,factor,dim,Vk,Rk);
@@ -403,7 +403,7 @@ void nsCCR::CubicalComplexRefinement::addCobd(int index, Coefficient factor, int
     }
 }
 
-void nsCCR::CubicalComplexRefinement::addSplxCobd(Coordinate splx, Coefficient factor, int dim, ReduceCol &Vk, ReduceCol &Rk)
+void nsCCR::CubicalCplxSubd::addSplxCobd(Coordinate splx, Coefficient factor, int dim, ReduceCol &Vk, ReduceCol &Rk)
 {
     Vk.push(getCellOrder(splx,factor));
     for(int i=0;i<2*(3-dim);i++)
@@ -417,7 +417,7 @@ void nsCCR::CubicalComplexRefinement::addSplxCobd(Coordinate splx, Coefficient f
     }
 }
 
-void nsCCR::CubicalComplexRefinement::computePersPair(int dim, std::vector<std::pair<real, real>> &persPair)
+void nsCCR::CubicalCplxSubd::computePersPair(int dim, std::vector<std::pair<real, real>> &persPair)
 {
     for(int i=0;i<m_columnToReduce[dim].size();i++)
     {
@@ -491,7 +491,7 @@ void nsCCR::CubicalComplexRefinement::computePersPair(int dim, std::vector<std::
     }
 }
 
-void nsCCR::CubicalComplexRefinement::computePH(std::vector<std::pair<real, real>> &persPair)
+void nsCCR::CubicalCplxSubd::computePH(std::vector<std::pair<real, real>> &persPair)
 {
     computeApntPair();
     // Initialize V and the column-aligned pivot vectors.
@@ -506,7 +506,7 @@ void nsCCR::CubicalComplexRefinement::computePH(std::vector<std::pair<real, real
     }
 }
 
-void nsCCR::CubicalComplexRefinement::moveLeft(int dim, int j, int i)
+void nsCCR::CubicalCplxSubd::moveLeft(int dim, int j, int i)
 {
     if(dim < 0 || dim >= static_cast<int>(m_Vk.size()) || i < 0 || i >= j ||
        j >= static_cast<int>(m_columnToReduce[dim].size()))
@@ -527,7 +527,7 @@ void nsCCR::CubicalComplexRefinement::moveLeft(int dim, int j, int i)
 
 
         //Check if pivot(R[k])>pivot(R[j])
-        if(!pivots[k].coord.isNull() && (pivots[j].coord.isNull() || pivots[k] > pivots[j]))
+        if(!pivots[k].coord.isNull() && (pivots[j].coord.isNull() || pivots[k] < pivots[j]))
         {
             // store donor column
             sparseColMat<CellOrder>::matColumn donorCol = m_Vk[dim].column(j);
@@ -573,12 +573,12 @@ void nsCCR::CubicalComplexRefinement::moveLeft(int dim, int j, int i)
     std::rotate(pivots.begin() + i, pivots.begin() + j, pivots.begin() + j + 1);
 }
 
-void nsCCR::CubicalComplexRefinement::moveRight(int dim, int i, int j)
+void nsCCR::CubicalCplxSubd::moveRight(int dim, int i, int j)
 {
     // assemble K={column indexes of V, s.t. V[i,k]!=0}={k1,...ks} //here k1=i
     CellOrder cellI=m_columnToReduce[dim][i];
     std::vector<int> K;
-    for(int k=i+1;k<m_columnToReduce[dim].size();k++)
+    for(int k=i+1;k<=j;k++)
     {
         if(m_Vk[dim].coefficient(cellI,k)!=0)
         {
@@ -597,7 +597,9 @@ void nsCCR::CubicalComplexRefinement::moveRight(int dim, int i, int j)
         const Coefficient rowCoef=m_Vk[dim].coefficient(cellI,ki);
         const Coefficient coef=static_cast<Coefficient>(m_modulus -
             static_cast<uint64_t>(rowCoef)*m_multInvr[donorRowCoef]%m_modulus);
-        if(m_pivotCol[dim][ki]>donorPiv)
+        const auto& targetPiv = m_pivotCol[dim][ki];
+        if(donorPiv.coord.isNull() ||
+        (!targetPiv.coord.isNull() && targetPiv < donorPiv))        
         {
             // V[ki]+=coef*donor_V
             m_Vk[dim].addCol(coef, ki, donorV, m_modulus);
@@ -624,6 +626,18 @@ void nsCCR::CubicalComplexRefinement::moveRight(int dim, int i, int j)
             donorRowCoef=rowCoef;
         }
     }
+    // Install the last saved donor, normalized to the implicit diagonal one.
+    const Coefficient donorRowInv=m_multInvr[donorRowCoef];
+    m_Vk[dim].setColumn(i,std::move(donorV));
+    m_Vk[dim].scaleCol(donorRowInv,i,m_modulus);
+    m_Vk[dim].eraseEntry(cellI,i);
+    // R updates implicitly through D*V; normalize its cached pivot as well.
+    m_pivotCol[dim][i]=donorPiv;
+    if(!donorPiv.coord.isNull())
+    {
+        m_pivotCol[dim][i].coef=static_cast<Coefficient>(
+            static_cast<uint64_t>(donorRowInv)*donorPiv.coef%m_modulus);
+    }
     // Move column i to j in D, R and V. V's row permutation follows the
     // cell coordinates used as sparse row labels.
     auto& cells=m_columnToReduce[dim];
@@ -633,7 +647,7 @@ void nsCCR::CubicalComplexRefinement::moveRight(int dim, int i, int j)
     std::rotate(pivots.begin()+i,pivots.begin()+i+1,pivots.begin()+j+1);
 }
 
-void nsCCR::CubicalComplexRefinement::MoveUp(int dim, int j, int i)
+void nsCCR::CubicalCplxSubd::MoveUp(int dim, int j, int i)
 {
     // Suppose we already changed the filtration of simplex corresponding to row j.
     // But its order in m_columnToReduce did not update yet.
@@ -653,7 +667,7 @@ void nsCCR::CubicalComplexRefinement::MoveUp(int dim, int j, int i)
 
     //step 2: find k1: piv(R[k1])=piv-j(R[k0])
     CellOrder pivK=getPivot(Rk);
-    if(pivK==cellJ)
+    if(pivK==cellJ)// pivot after move is the same as before
     {
         return;
     }
@@ -702,7 +716,7 @@ void nsCCR::CubicalComplexRefinement::MoveUp(int dim, int j, int i)
     }
 }
 
-void nsCCR::CubicalComplexRefinement::moveDown(int dim, int i, int j)
+void nsCCR::CubicalCplxSubd::moveDown(int dim, int i, int j)
 {
     // we update matrixV and pivot column before moving simplex at i down to j
 
@@ -715,8 +729,7 @@ void nsCCR::CubicalComplexRefinement::moveDown(int dim, int i, int j)
     for(int k=0;k<static_cast<int>(m_columnToReduce[dim-1].size());++k)
     {
         const CellOrder& pivot=m_pivotCol[dim-1][k];
-        if(!(pivot>cellJ)) continue;
-
+        if(pivot.coord.isNull() || pivot < cellJ) continue;
         ReduceCol Vk,Rk;
         addCobd(k,1,dim-1,Vk,Rk);
         while(true)
@@ -744,7 +757,7 @@ void nsCCR::CubicalComplexRefinement::moveDown(int dim, int i, int j)
     for (int index=1;index<K.size();index++)
     {
         int k=K[index];
-        if(m_pivotCol[dim-1][k]>donorPiv)
+        if(m_pivotCol[dim-1][k]<donorPiv)
         {
             // V[k]+=coef*donor_column_V to eliminate R[i,k]
             const Coefficient coef=static_cast<Coefficient>(m_modulus -
@@ -766,6 +779,7 @@ void nsCCR::CubicalComplexRefinement::moveDown(int dim, int i, int j)
             m_Vk[dim-1].addCol(coef,k,donorCol,m_modulus);
 
             m_pivotCol[dim-1][k]=donorPiv;
+            m_pivotCol[dim-1][k].coef = static_cast<Coefficient>(static_cast<uint64_t>(coef) * donorPiv.coef % m_modulus);
 
             donorCol=std::move(nextDonorCol);
             donorPiv=nextDonorPiv;
@@ -773,4 +787,5 @@ void nsCCR::CubicalComplexRefinement::moveDown(int dim, int i, int j)
         }
     }
     
+    m_pivotCol[dim - 1][K.front()] = getCellOrder(cellI.coord, coefK.front());    
 }

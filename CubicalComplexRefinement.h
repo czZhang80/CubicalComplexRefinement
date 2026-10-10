@@ -723,7 +723,7 @@ private:
 
 
 
-class CubicalComplexRefinement
+class CubicalCplxSubd
 {
 public:
     using real=float;
@@ -776,9 +776,9 @@ public:
 
     };
 public:
-    CubicalComplexRefinement() = default;
+    CubicalCplxSubd() = default;
 
-    CubicalComplexRefinement(const nsSF::OctreeSF<real>* scalarField, uint16_t prime=2)
+    CubicalCplxSubd(const nsSF::OctreeSF<real>* scalarField, uint16_t prime=2)
     {
         if(!isPrime(prime))
         {
@@ -1008,6 +1008,8 @@ public:
 
     void MoveUp(int dim, int j,int i);
     void moveDown(int dim,int i,int j);
+
+    void subdivide();
 
 //private:
 public:

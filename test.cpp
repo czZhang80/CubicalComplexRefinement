@@ -11,7 +11,7 @@
 #include <string>
 
 void printGridInfo(
-    std::pair<const nsCCR::Coordinate, nsCCR::CubicalComplexRefinement::CellData> simplex)
+    std::pair<const nsCCR::Coordinate, nsCCR::CubicalCplxSubd::CellData> simplex)
 {
     nsCCR::Coordinate coord = simplex.first;
 
@@ -245,7 +245,7 @@ std::vector<float> readGrayscaleVolume(const std::string& filename, size_t expec
 }
 
 
-nsCCR::CubicalComplexRefinement generateFrom3dImg(
+nsCCR::CubicalCplxSubd generateFrom3dImg(
     const std::string& filename,
     const std::array<size_t, 3>& dimensions,
     uint16_t prime)
@@ -271,10 +271,10 @@ nsCCR::CubicalComplexRefinement generateFrom3dImg(
     }
 
     ImageOctreeSF scalarField(dimensions, readGrayscaleVolume(filename, valueCount));
-    return nsCCR::CubicalComplexRefinement(&scalarField, prime);
+    return nsCCR::CubicalCplxSubd(&scalarField, prime);
 }
 
-nsCCR::CubicalComplexRefinement ccrExample(int n)
+nsCCR::CubicalCplxSubd ccrExample(int n)
 {
     switch(n)
     {
@@ -300,14 +300,28 @@ nsCCR::CubicalComplexRefinement ccrExample(int n)
                 }
             }
             scalarField.addLeaf({rootGridSize, 0, 0}, rootGridSize);
-            return nsCCR::CubicalComplexRefinement(&scalarField, 5);
+            return nsCCR::CubicalCplxSubd(&scalarField, 5);
         }
         case 1:
-            return generateFrom3dImg("D:\\CProjects\\Cubical Complex Refinement\\CubicalComplexRefinement\\example\\image_10x10x10_spherical_shell.txt",
+            return generateFrom3dImg("D:\\projects\\CubicalComplexRefinement\\example\\image_10x10x10_spherical_shell.txt",
             {10,10,10},5);
         case 2:
-            return generateFrom3dImg("D:\\CProjects\\Cubical Complex Refinement\\CubicalComplexRefinement\\example\\image_10x10x10.txt",
+            return generateFrom3dImg("D:\\projects\\CubicalComplexRefinement\\example\\image_10x10x10.txt",
             {10,10,10},5);
+        case 3:
+        {
+            // 3 x 2 x 2 vertices: two cubes along the x direction, over F_5.
+            // Layout: image[x * 4 + y * 2 + z], with z varying fastest.
+            // After computePH(), moveLeft(1, 4, 0) takes the else branch
+            // at k = 2, then the swap branch at k = 0 (k = 3, 1 are skipped).
+            ImageOctreeSF scalarField({3, 2, 2}, {
+                 8,  4,  2,  0, // x = 0
+                10,  3,  1, 11, // x = 1
+                 5,  7,  6,  9  // x = 2
+            });
+            return nsCCR::CubicalCplxSubd(&scalarField, 5);
+        }
+
         default:
             throw std::invalid_argument("Invalid example number.");
     }
@@ -337,7 +351,7 @@ void testBuildVFilt()
     }
     scalarField.addLeaf({rootGridSize, 0, 0}, rootGridSize);
 
-    nsCCR::CubicalComplexRefinement ccr;
+    nsCCR::CubicalCplxSubd ccr;
     ccr.buildVFilt(&scalarField);
     std::cout << ccr.m_splxFilt.size();
     for(auto splx : ccr.m_splxFilt)
@@ -351,7 +365,7 @@ void testBuildVFilt()
 //  0: not an apparent pair
 //  1/2: zero-persistence apparent pair
 //  3/4: nonzero-persistence apparent pair
-int isApparentPair(nsCCR::CubicalComplexRefinement* ccr,
+int isApparentPair(nsCCR::CubicalCplxSubd* ccr,
                    nsCCR::Coordinate coord1,
                    nsCCR::Coordinate coord2)
 {
@@ -364,7 +378,7 @@ int isApparentPair(nsCCR::CubicalComplexRefinement* ccr,
         return -1;
     }
 
-    using CellOrder = nsCCR::CubicalComplexRefinement::CellOrder;
+    using CellOrder = nsCCR::CubicalCplxSubd::CellOrder;
     CellOrder cell1, cell2;
     int returnVal;
     if(coord1.dim() - coord2.dim() == 1)
@@ -428,7 +442,7 @@ int isApparentPair(nsCCR::CubicalComplexRefinement* ccr,
     return returnVal;
 }
 
-int testHaveApparentPair(nsCCR::CubicalComplexRefinement *ccr, nsCCR::CubicalComplexRefinement::CellOrder splx)
+int testHaveApparentPair(nsCCR::CubicalCplxSubd *ccr, nsCCR::CubicalCplxSubd::CellOrder splx)
 {
     if(ccr == nullptr || !ccr->contain(splx.coord))
     {
@@ -480,7 +494,7 @@ int testHaveApparentPair(nsCCR::CubicalComplexRefinement *ccr, nsCCR::CubicalCom
 
 void testcomputeApntPair()
 {
-    nsCCR::CubicalComplexRefinement ccr = ccrExample(1);
+    nsCCR::CubicalCplxSubd ccr = ccrExample(1);
     ccr.computeApntPair();
 
     int apparentPairCount = 0, criticalSplxCount = 0;
@@ -581,13 +595,14 @@ void testcomputeApntPair()
 
 void testcomputePersPair()
 {
-    nsCCR::CubicalComplexRefinement ccr=ccrExample(2);
-    std::vector<std::pair<nsCCR::CubicalComplexRefinement::real,
-                          nsCCR::CubicalComplexRefinement::real>> persPair;
+    nsCCR::CubicalCplxSubd ccr=ccrExample(2);
+    std::vector<std::pair<nsCCR::CubicalCplxSubd::real,
+                          nsCCR::CubicalCplxSubd::real>> persPair;
     ccr.computeApntPair();
     for(int i=0;i<ccr.m_Vk.size();i++)
     {
         ccr.m_Vk[i].resize(ccr.m_columnToReduce[i].size());
+        ccr.m_pivotCol[i].resize(ccr.m_columnToReduce[i].size());
     }
 
     for(int i=0;i<ccr.m_columnToReduce.size();i++)
@@ -606,4 +621,305 @@ void testcomputePersPair()
             std::cout << "[" + std::to_string(pp.first) + "," + death + ")" << std::endl;
         }
     }
+}
+
+void testMoveLeft()
+{
+    using CellOrder = nsCCR::CubicalCplxSubd::CellOrder;
+    using nsCCR::Coefficient;
+    using nsCCR::Coordinate;
+
+    // Synthetic matrix example, not a geometric cubical complex.
+    // The coordinates below are distinct row labels only.
+    nsCCR::CubicalCplxSubd ccr;
+    ccr.m_modulus = 5;
+    nsCCR::multInvrVect(ccr.m_modulus, ccr.m_multInvr);
+    const auto makeCell = [](int dim, uint16_t x, float filtration,
+                             Coefficient coefficient = 0)
+    {
+        int extendDir[3] = {1, dim == 2 ? 1 : 0, 0};
+        uint16_t location[3] = {x, 0, 0};
+        return CellOrder(filtration, Coordinate(0, 0, nullptr, location),
+                         Coordinate(dim, 1, extendDir, location), coefficient);
+    };
+
+    const CellOrder a = makeCell(1, 0, 4);
+    const CellOrder b = makeCell(1, 2, 3);
+    const CellOrder c = makeCell(1, 4, 2);
+    const CellOrder d = makeCell(1, 6, 1);
+    const CellOrder pa = makeCell(2, 0, 10, 4);
+    const CellOrder pb = makeCell(2, 2, 40, 1);
+    const CellOrder pc = makeCell(2, 4, 30, 2);
+    const CellOrder pd = makeCell(2, 6, 20, 3);
+
+    // V = [a, b, c, 2a + 3c + d]; diagonal entries are implicit.
+    // A compatible D has columns [4pa, pb, 2pc, 2pa + 4pc + 3pd],
+    // giving R = DV = [4pa, pb, 2pc, 3pd] over F_5.
+    // Pivot order is pa < pd < pc < pb.
+    ccr.m_columnToReduce[1] = {a, b, c, d};
+    ccr.m_pivotCol[1] = {pa, pb, pc, pd};
+    auto& V = ccr.m_Vk[1];
+    V.resize(4);
+    CellOrder entry = a;
+    entry.coef = 2;
+    V.addEntry(3, entry, ccr.m_modulus);
+    entry = c;
+    entry.coef = 3;
+    V.addEntry(3, entry, ccr.m_modulus);
+
+    // k = 2: eliminate; k = 1: skip; k = 0: swap and rescale.
+    ccr.moveLeft(1, 3, 0);
+
+    const std::vector<CellOrder> expectedCells = {d, a, b, c};
+    const std::array<CellOrder, 4> expectedPivots = {pa, pd, pb, pc};
+    const std::array<Coefficient, 4> expectedCoefficients = {2, 4, 1, 2};
+    if(ccr.m_columnToReduce[1] != expectedCells)
+    {
+        throw std::runtime_error("moveLeft: incorrect cell order.");
+    }
+    // V = [d, a + 3d, b, c]; only the entry (d, column 1) is stored.
+    for(size_t column = 0; column < expectedCells.size(); ++column)
+    {
+        const auto& stored = V.column(column);
+        if((column == 1 && (stored.size() != 1 || !(stored[0] == d) ||
+                            stored[0].coef != 3)) ||
+           (column != 1 && !stored.empty()))
+        {
+            throw std::runtime_error("moveLeft: incorrect stored V column.");
+        }
+        const auto& pivot = ccr.m_pivotCol[1][column];
+        if(!(pivot == expectedPivots[column]) ||
+           pivot.coef != expectedCoefficients[column])
+        {
+            throw std::runtime_error("moveLeft: incorrect pivot or coefficient.");
+        }
+    }
+    std::cout << "moveLeft four-column example passed." << std::endl;
+}
+
+void testMoveRight()
+{
+    using CellOrder = nsCCR::CubicalCplxSubd::CellOrder;
+    using nsCCR::Coefficient;
+    using nsCCR::Coordinate;
+
+    // Synthetic matrix example over F_5; coordinates are distinct labels.
+    nsCCR::CubicalCplxSubd ccr;
+    ccr.m_modulus = 5;
+    nsCCR::multInvrVect(ccr.m_modulus, ccr.m_multInvr);
+    const auto makeCell = [](int dim, uint16_t x, float filtration,
+                             Coefficient coefficient = 0)
+    {
+        int extendDir[3] = {1, dim == 2 ? 1 : 0, 0};
+        uint16_t location[3] = {x, 0, 0};
+        return CellOrder(filtration, Coordinate(0, 0, nullptr, location),
+                         Coordinate(dim, 1, extendDir, location), coefficient);
+    };
+
+    const CellOrder a = makeCell(1, 0, 5);
+    const CellOrder b = makeCell(1, 2, 4);
+    const CellOrder c = makeCell(1, 4, 3);
+    const CellOrder d = makeCell(1, 6, 2);
+    const CellOrder e = makeCell(1, 8, 1);
+    const CellOrder pa = makeCell(2, 0, 20, 4);
+    const CellOrder pb = makeCell(2, 2, 10, 1);
+    const CellOrder pc = makeCell(2, 4, 50, 2);
+    const CellOrder pd = makeCell(2, 6, 40, 3);
+    const CellOrder pe = makeCell(2, 8, 30, 4);
+
+    // V = [a, 2a + b, c, 3a + d, 4a + e].
+    // D = [4pa, 2pa + pb, 2pc, 3pa + 3pd, 4pa + 4pe], so
+    // R = DV = [4pa, pb, 2pc, 3pd, 4pe], with pb < pa < pe < pd < pc.
+    ccr.m_columnToReduce[1] = {a, b, c, d, e};
+    ccr.m_pivotCol[1] = {pa, pb, pc, pd, pe};
+    auto& V = ccr.m_Vk[1];
+    V.resize(5);
+    CellOrder entry = a;
+    entry.coef = 2;
+    V.addEntry(1, entry, ccr.m_modulus);
+    entry.coef = 3;
+    V.addEntry(3, entry, ccr.m_modulus);
+    entry.coef = 4;
+    V.addEntry(4, entry, ccr.m_modulus);
+
+    // K = {1, 3, 4}: column 2 is skipped.
+    // k = 1: eliminate with donor a, retaining pivot pb.
+    // k = 3: eliminate and replace donor with the old column 3a + d.
+    // k = 4: factor = -4/3 = 2; target becomes 2d + e.
+    // Normalize the final donor by 1/3 = 2 to obtain a + 2d.
+    ccr.moveRight(1, 0, 4);
+
+    const std::vector<CellOrder> expectedCells = {b, c, d, e, a};
+    const std::array<CellOrder, 5> expectedPivots = {pb, pc, pa, pe, pd};
+    const std::array<Coefficient, 5> expectedCoefficients = {1, 2, 3, 4, 1};
+    if(ccr.m_columnToReduce[1] != expectedCells)
+    {
+        throw std::runtime_error("moveRight: incorrect cell order.");
+    }
+    // V = [b, c, d, 2d + e, a + 2d], with implicit diagonal entries.
+    for(size_t column = 0; column < expectedCells.size(); ++column)
+    {
+        const auto& stored = V.column(column);
+        const Coefficient expectedEntry = 2;
+        if((column < 3 && !stored.empty()) ||
+           (column >= 3 && (stored.size() != 1 || !(stored[0] == d) ||
+                             stored[0].coef != expectedEntry)))
+        {
+            throw std::runtime_error("moveRight: incorrect stored V column.");
+        }
+        const auto& pivot = ccr.m_pivotCol[1][column];
+        if(!(pivot == expectedPivots[column]) ||
+           pivot.coef != expectedCoefficients[column])
+        {
+            throw std::runtime_error("moveRight: incorrect pivot or coefficient.");
+        }
+    }
+    std::cout << "moveRight five-column example passed." << std::endl;
+}
+
+namespace
+{
+using RowMoveMatrix = std::array<std::array<nsCCR::Coefficient, 4>, 4>;
+
+struct RowMoveExample
+{
+    nsCCR::CubicalCplxSubd ccr;
+    std::array<nsCCR::Coordinate, 3> cubes; // A, B, C along the x-axis
+};
+
+RowMoveExample makeRowMoveExample()
+{
+    constexpr uint16_t size = 1u << nsCCR::g_secondSubdivNum;
+    TestOctreeSF scalarField({3, 1, 1});
+    for(uint16_t x = 0; x < 3; ++x)
+    {
+        scalarField.addLeaf({static_cast<uint16_t>(x * size), 0, 0}, size);
+    }
+    RowMoveExample example;
+    auto& ccr = example.ccr;
+    ccr = nsCCR::CubicalCplxSubd(&scalarField, 5);
+    int cubeAxes[3] = {1, 1, 1};
+    int faceAxes[3] = {0, 1, 1};
+    for(uint16_t x = 0; x < 3; ++x)
+    {
+        uint16_t location[3] = {static_cast<uint16_t>(x * size), 0, 0};
+        example.cubes[x] = nsCCR::Coordinate(3, size, cubeAxes, location);
+    }
+    // Select four yz faces in descending x order: f3, f2, f1, f0.
+    // Their actual coboundaries are C, B-C, A-B, -A.
+    for(int x = 3; x >= 0; --x)
+    {
+        uint16_t location[3] = {static_cast<uint16_t>(x * size), 0, 0};
+        ccr.m_columnToReduce[2].push_back(
+            ccr.getCellOrder(nsCCR::Coordinate(2, size, faceAxes, location)));
+    }
+    for(int x = 2; x >= 0; --x)
+    {
+        ccr.m_columnToReduce[3].push_back(ccr.getCellOrder(example.cubes[x]));
+        ccr.m_pivotCol[2].push_back(ccr.getCellOrder(example.cubes[x], 1));
+    }
+    ccr.m_pivotCol[2].push_back(nsCCR::CubicalCplxSubd::CellOrder{});
+    ccr.m_Vk[2].resize(4);
+    // V = [f3, f2, f1, f0+f1+f2+f3], so R = [C, B-C, A-B, 0].
+    for(size_t column = 0; column < 3; ++column)
+    {
+        auto entry = ccr.m_columnToReduce[2][column];
+        entry.coef = 1;
+        ccr.m_Vk[2].addEntry(3, entry, ccr.m_modulus);
+    }
+    return example;
+}
+
+void checkRowMove(RowMoveExample& example, const RowMoveMatrix& expectedV,
+                  const std::string& name)
+{
+    auto& ccr = example.ccr;
+    const auto& cells = ccr.m_columnToReduce[2];
+    // Independent, explicit D: rows A,B,C; columns f3,f2,f1,f0.
+    constexpr int D[3][4] = {{0, 0, 1, 4}, {0, 1, 4, 0}, {1, 4, 0, 0}};
+    for(size_t column = 0; column < 4; ++column)
+    {
+        std::array<nsCCR::Coefficient, 4> fullV{};
+        fullV[column] = 1;
+        for(const auto& entry : ccr.m_Vk[2].column(column))
+        {
+            const auto row = std::find(cells.begin(), cells.end(), entry);
+            if(row == cells.end() || static_cast<size_t>(row - cells.begin()) >= column)
+            {
+                throw std::runtime_error(name + ": V is not strictly upper triangular in storage.");
+            }
+            auto& value = fullV[row - cells.begin()];
+            value = static_cast<nsCCR::Coefficient>((value + entry.coef) % 5);
+        }
+        if(fullV != expectedV[column])
+        {
+            throw std::runtime_error(name + ": unexpected V column " + std::to_string(column));
+        }
+        nsCCR::CubicalCplxSubd::CellOrder expectedPivot{};
+        for(size_t row = 0; row < 3; ++row)
+        {
+            int coefficient = 0;
+            for(size_t k = 0; k < 4; ++k) coefficient += D[row][k] * fullV[k];
+            coefficient %= 5;
+            if(coefficient == 0) continue;
+            const auto candidate = ccr.getCellOrder(example.cubes[row],
+                static_cast<nsCCR::Coefficient>(coefficient));
+            if(expectedPivot.coord.isNull() || candidate < expectedPivot) expectedPivot = candidate;
+        }
+        const auto& actual = ccr.m_pivotCol[2][column];
+        if(!(actual == expectedPivot) || actual.coef != expectedPivot.coef)
+        {
+            throw std::runtime_error(name + ": pivot mismatch in column " +
+                std::to_string(column) + " (expected coefficient " +
+                std::to_string(expectedPivot.coef) + ", got " + std::to_string(actual.coef) + ").");
+        }
+        if(!expectedPivot.coord.isNull() && actual.filtration != expectedPivot.filtration)
+        {
+            throw std::runtime_error(name + ": stale pivot filtration in column " + std::to_string(column));
+        }
+        for(size_t earlier = 0; earlier < column; ++earlier)
+        {
+            if(!actual.coord.isNull() && actual == ccr.m_pivotCol[2][earlier])
+            {
+                throw std::runtime_error(name + ": duplicate nonzero pivot.");
+            }
+        }
+    }
+}
+
+constexpr RowMoveMatrix initialRowMoveV = {{{1, 0, 0, 0}, {0, 1, 0, 0},
+                                           {0, 0, 1, 0}, {1, 1, 1, 1}}};
+}
+
+void testMoveUp()
+{
+    auto example = makeRowMoveExample();
+    checkRowMove(example, initialRowMoveV, "MoveUp initial state");
+    auto& ccr = example.ccr;
+    // Isolate the row update: change A's filtration, retaining the old row
+    // vector [C,B,A], as required by MoveUp's calling convention.
+    ccr.m_vertFilt.at(ccr.m_splxFilt.at(example.cubes[0]).domiVert).filtration = 1536;
+    // A moves from row 2 to row 0. Column 2 collides first with B, then C:
+    // (A-B) + (B-C) + C = A. The zero column must remain zero.
+    ccr.MoveUp(3, 2, 0);
+    const RowMoveMatrix expectedV = {{{1, 0, 0, 0}, {0, 1, 0, 0},
+                                     {1, 1, 1, 0}, {1, 1, 1, 1}}};
+    checkRowMove(example, expectedV, "MoveUp");
+    std::cout << "MoveUp three-cube example passed." << std::endl;
+}
+
+void testMoveDown()
+{
+    auto example = makeRowMoveExample();
+    checkRowMove(example, initialRowMoveV, "moveDown initial state");
+    auto& ccr = example.ccr;
+    // C moves from row 0 to row 2; retain old row/pivot records during repair.
+    ccr.m_vertFilt.at(ccr.m_splxFilt.at(example.cubes[2]).domiVert).filtration = 640;
+    // K = {0,1}: eliminate C from column 1, obtaining (B-C) + C = B.
+    // Expected R = [C, B, A-B, 0], with pivot coefficients [1,1,1,0].
+    ccr.moveDown(3, 0, 2);
+    const RowMoveMatrix expectedV = {{{1, 0, 0, 0}, {1, 1, 0, 0},
+                                     {0, 0, 1, 0}, {1, 1, 1, 1}}};
+    checkRowMove(example, expectedV, "moveDown");
+    std::cout << "moveDown three-cube example passed." << std::endl;
 }

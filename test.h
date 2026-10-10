@@ -10,7 +10,7 @@
 #include <vector>
 
 void printGridInfo(
-    std::pair<const nsCCR::Coordinate, nsCCR::CubicalComplexRefinement::CellData> simplex);
+    std::pair<const nsCCR::Coordinate, nsCCR::CubicalCplxSubd::CellData> simplex);
 void printNodeRef(nsCCR::Coordinate coord);
 
 // Simple in-memory OctreeSF used to test the leaf-iterator input interface.
@@ -45,18 +45,25 @@ private:
 // Generate cubical complex from 3 dimensional digital images. The image is assumed to be 
 // gray style and presented in an array with pixel(x,y,z)=image(x*100+y*10+z).
 // The corresponding octree have pixels as vertices of a cube, and all nodes are leaf nodes.
-nsCCR::CubicalComplexRefinement generateFrom3dImg(
+nsCCR::CubicalCplxSubd generateFrom3dImg(
     const std::string& filename,
     const std::array<size_t, 3>& dimensions = {10, 10, 10},
     uint16_t prime = 2);
 
-nsCCR::CubicalComplexRefinement ccrExample(int n);
+nsCCR::CubicalCplxSubd ccrExample(int n);
 
 void testBuildVFilt();
-int isApparentPair(nsCCR::CubicalComplexRefinement* ccr,
+int isApparentPair(nsCCR::CubicalCplxSubd* ccr,
                    nsCCR::Coordinate coord1,
                    nsCCR::Coordinate coord2);
-int testHaveApparentPair(nsCCR::CubicalComplexRefinement* ccr, 
-    nsCCR::CubicalComplexRefinement::CellOrder splx);
+int testHaveApparentPair(nsCCR::CubicalCplxSubd* ccr, 
+    nsCCR::CubicalCplxSubd::CellOrder splx);
 void testcomputeApntPair();
 void testcomputePersPair();
+
+
+//test for move algorithms
+void testMoveUp();
+void testMoveDown();
+void testMoveLeft();
+void testMoveRight();
